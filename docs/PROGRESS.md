@@ -153,3 +153,141 @@ Plano do Bloco 1 cobre: estrutura de módulos (config, common/erros, logging, gu
 
 ### Próximo passo recomendado
 Com aprovação, executar a implementação do Bloco 1 conforme este plano (escopo: `Pet_Marketplace_Back/`), seguida de `pnpm typecheck/lint/build/test` + smoke `GET /api/v1/health`, e Checkpoint 004.
+
+---
+
+## Checkpoint 004 - Bloco 2: Supabase/PostGIS preparado sem aplicar migrations
+
+- **Data/hora:** 2026-05-18 (America/Sao_Paulo)
+- **Tarefa atual:** Preparacao segura do Bloco 2 de banco, sem aplicar alteracoes no Supabase.
+- **Agentes envolvidos:** C10_Maestro, B_BackendDomain, S_Seguranca, O_Observability
+
+### Resumo
+- Backend publicado no GitHub confirmado em `main`.
+- `.env`, `node_modules`, `dist`, `.publish`, `.claude` e `BUG_Debugger` confirmados como ignorados.
+- Supabase Auth validado com anon key: endpoints de health/settings responderam `200`.
+- `SUPABASE_URL` aponta para `https://oumrtrcqsyugdvildfmr.supabase.co`.
+- `SUPABASE_SERVICE_ROLE_KEY` e `DATABASE_URL` seguem ausentes; por isso Postgres/PostGIS real ainda nao foi validado.
+- Migrations SQL do Bloco 2 foram preparadas, mas **nao aplicadas**.
+
+### Documentos lidos
+- `docs/06_SPEC_DATABASE.md`
+- `docs/15_SPEC_MIGRATIONS_ROLLBACK.md`
+- `docs/18_SPEC_DATABASE_SQL_DRAFT.md`
+
+### Recorte do Bloco 2 preparado
+- Extensoes `postgis` e `pgcrypto`.
+- Enums/base types.
+- `users`, `user_roles`, `tutor_profiles`, `provider_profiles`, `provider_services`, `pets`, `addresses`, `audit_logs`.
+- Localizacao armazenada com PostGIS, protegida por RLS; nenhuma policy publica expoe endereco completo ou coordenadas exatas.
+- RLS inicial defensiva para owner/admin.
+- Indices basicos, incluindo indice GiST de localizacao.
+- Smoke SQL somente leitura para validar extensoes, tabelas, tipos, RLS e policies depois da aplicacao.
+
+### Fora do escopo nesta etapa
+- Pagamentos, Stripe, Pix, Wise, escrow, payouts.
+- Chat, bookings, availability, reviews, reports/admin completo.
+- Seeds com dados de teste.
+- Aplicacao de migrations no banco remoto.
+
+### Arquivos criados / alterados
+- `Pet_Marketplace_Back/supabase/README.md`
+- `Pet_Marketplace_Back/supabase/migrations/20260518_001_enable_extensions.sql`
+- `Pet_Marketplace_Back/supabase/migrations/20260518_002_core_profiles_location_audit.sql`
+- `Pet_Marketplace_Back/supabase/smoke/20260518_001_block2_readiness.sql`
+- `docs/PROGRESS.md`
+
+### Comandos executados
+- `git status --short --ignored`
+- `git check-ignore -v ...`
+- `git ls-remote --heads https://github.com/thepetlobbyapp-coder/Pet_Marketplace_Back.git main`
+- Validacao Supabase Auth via `fetch` sem imprimir segredos.
+- `rg` para checar ausencia de segredos reais fora de `.env`.
+
+### Testes rodados
+- `pnpm typecheck` - passou.
+- `pnpm lint` - passou.
+- `pnpm build` - passou.
+- `pnpm test:e2e` - passou (2 testes).
+
+### Pendencias
+- `[NECESSARIO]` preencher `SUPABASE_SERVICE_ROLE_KEY` no `.env` local do backend.
+- `[NECESSARIO]` preencher `DATABASE_URL` no `.env` local do backend.
+- `[NECESSARIO]` instalar/disponibilizar `psql` ou usar Supabase SQL editor/CLI para aplicar e rodar smoke SQL.
+- Revisar e aprovar as migrations antes de aplicar no banco.
+
+### Riscos
+- As migrations ainda nao foram executadas contra um Postgres real; podem exigir pequenos ajustes de sintaxe/ambiente ao aplicar.
+- RLS inicial e defensiva e pode exigir refinamento quando os fluxos Mobile/Admin forem implementados.
+- Sem `DATABASE_URL`, nao ha validacao de PostGIS real nem de schema aplicado.
+
+### Proximo passo recomendado
+Fornecer `SUPABASE_SERVICE_ROLE_KEY` e `DATABASE_URL`, revisar as migrations preparadas e, apos confirmacao explicita, aplicar em Supabase e rodar `supabase/smoke/20260518_001_block2_readiness.sql`.
+
+---
+
+## Checkpoint 005 - Bloco 2: migrations aplicadas e validadas
+
+- **Data/hora:** 2026-05-18 (America/Sao_Paulo)
+- **Tarefa atual:** Aplicacao controlada das migrations 001/002 no Supabase `thepetlobbyapp-dev/main`.
+- **Agentes envolvidos:** C10_Maestro, B_BackendDomain, S_Seguranca, O_Observability
+
+### Resumo
+- `SUPABASE_SERVICE_ROLE_KEY` e `DATABASE_URL` foram adicionados ao `.env` local do backend.
+- `.env` permanece ignorado pelo Git.
+- Migration 001 aplicada via SQL Editor: `postgis` e `pgcrypto`.
+- Migration 002 aplicada pelo arquivo local com trava `ALLOW_DB_WRITE=APLICAR_MIGRATION_CONFIRMADO`.
+- Smoke read-only confirmou conexao, extensoes, tabelas, RLS e ausencia de grants de escrita para `authenticated`.
+
+### Banco validado
+- Extensoes:
+  - `pgcrypto` 1.3
+  - `postgis` 3.3.7
+- Tabelas encontradas:
+  - `addresses`
+  - `audit_logs`
+  - `pets`
+  - `provider_profiles`
+  - `provider_services`
+  - `tutor_profiles`
+  - `user_roles`
+  - `users`
+- RLS habilitado em todas as tabelas acima.
+- `authenticatedWriteGrants`: vazio.
+
+### Arquivos criados / alterados nesta etapa
+- `Pet_Marketplace_Back/scripts/db/env.mjs`
+- `Pet_Marketplace_Back/scripts/db/smoke-readonly.mjs`
+- `Pet_Marketplace_Back/scripts/db/run-sql-file.mjs`
+- `Pet_Marketplace_Back/package.json`
+- `Pet_Marketplace_Back/pnpm-lock.yaml`
+- `docs/PROGRESS.md`
+
+### Comandos executados
+- `pnpm add -D pg`
+- `pnpm db:smoke`
+- `$env:ALLOW_DB_WRITE='APLICAR_MIGRATION_CONFIRMADO'; pnpm db:run-sql supabase/migrations/20260518_002_core_profiles_location_audit.sql`
+- `pnpm typecheck`
+- `pnpm lint`
+- `pnpm build`
+- `pnpm test:e2e`
+
+### Testes rodados
+- `pnpm db:smoke` - passou.
+- `pnpm typecheck` - passou.
+- `pnpm lint` - passou.
+- `pnpm build` - passou.
+- `pnpm test:e2e` - passou (2 testes).
+
+### Pendencias
+- Implementar camada backend que usa o schema real com service role controlada.
+- Criar seeds fake/local apenas quando houver decisao sobre dados de teste.
+- Definir fluxo de criacao/sincronizacao de `public.users` a partir de `auth.users`.
+- Refinar RLS conforme os fluxos Mobile/Admin forem implementados.
+
+### Riscos
+- O banco remoto aparece no Supabase como `main`/`PRODUCTION`, mesmo sendo projeto `thepetlobbyapp-dev`; continuar exigindo confirmacao explicita antes de qualquer SQL.
+- As policies atuais sao defensivas e privilegiam backend como autoridade; pode ser necessario abrir casos especificos de leitura/escrita com cuidado em blocos futuros.
+
+### Proximo passo recomendado
+Iniciar a integracao backend-schema: criar servicos/repositorios para perfis base, sincronizacao de usuario autenticado e smoke e2e com Supabase real, sem expor service role ao cliente.

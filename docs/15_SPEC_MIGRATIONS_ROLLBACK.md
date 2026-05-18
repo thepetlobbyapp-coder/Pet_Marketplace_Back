@@ -42,7 +42,39 @@ Regras:
 - não alterar banco manualmente sem registrar migration;
 - migrations devem ser revisadas antes de rodar em produção;
 - migrations destrutivas exigem plano de backup;
-- usar nomes claros e timestamp.
+- usar nomes claros e timestamp;
+- preparar SQL nao autoriza aplicar SQL no banco;
+- aplicar SQL exige confirmacao explicita do usuario, ambiente alvo e comando exato.
+
+### 3.1 Regra de aplicacao de SQL
+
+Por padrao, migrations ficam em estado **preparado para revisao**.
+
+O agente deve diferenciar sempre:
+
+- **Preparar SQL:** criar/revisar arquivos `.sql`, documentar impacto e rodar
+  validacoes locais que nao alteram banco.
+- **Aplicar SQL:** executar no Supabase/Postgres ou orientar o usuario a colar no
+  SQL Editor. Esta acao so acontece apos confirmacao explicita.
+- **Smoke SQL:** consulta read-only para verificar schema; deve ser rodada apenas
+  depois da aplicacao das migrations relacionadas.
+
+Antes de aplicar SQL, registrar claramente:
+
+- ambiente alvo (`local`, `staging`, `production` ou projeto Supabase especifico);
+- projeto Supabase/ref;
+- arquivos SQL em ordem;
+- se a migration e aditiva, destrutiva ou read-only;
+- plano de rollback ou backup quando necessario;
+- comando exato ou bloco SQL que sera executado.
+
+Texto de confirmacao esperado:
+
+```txt
+APLICAR MIGRATIONS NO SUPABASE <ambiente>
+```
+
+Sem essa confirmacao, o SQL nao deve ser executado.
 
 Exemplo:
 

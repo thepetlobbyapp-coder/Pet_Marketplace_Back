@@ -78,6 +78,34 @@ test: [descrição]      → testes
 
 ## Regras de Comportamento
 
+### Banco, SQL e migrations
+
+1. **Preparar SQL nao significa aplicar SQL.**
+   Quando uma tarefa pedir para criar, preparar, revisar ou validar migrations,
+   o agente deve gerar arquivos e instrucoes, mas nao deve executar nada contra
+   Supabase/Postgres sem uma ordem explicita separada.
+
+2. **Nunca rodar SQL em banco sem confirmacao explicita.**
+   Antes de qualquer comando que altere schema ou dados, o agente deve informar:
+   ambiente alvo, projeto Supabase, arquivo(s) SQL, tipo de impacto, necessidade
+   de backup/rollback e comando exato. A execucao so pode acontecer depois de o
+   usuario confirmar com texto claro, por exemplo:
+   `APLICAR MIGRATIONS NO SUPABASE <ambiente>`.
+
+3. **Smoke/read-only tambem deve ser identificado.**
+   SQL somente leitura pode ser proposto como validacao, mas o agente deve dizer
+   explicitamente que e read-only e quando deve ser rodado. Smoke de schema so
+   faz sentido depois que as migrations correspondentes foram aplicadas.
+
+4. **Ambiente sempre vem antes da acao.**
+   Se o ambiente nao estiver claro (`local`, `staging`, `production` ou projeto
+   Supabase especifico), parar e perguntar. Nunca assumir que o banco remoto e
+   seguro para alteracao.
+
+5. **Segredos nunca entram no Git ou na resposta.**
+   `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` e demais secrets ficam apenas no
+   backend/local seguro. Nunca imprimir valores completos.
+
 ### O que você DEVE fazer
 
 1. **Ler os arquivos de contexto antes de responder.**

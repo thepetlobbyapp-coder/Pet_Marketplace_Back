@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "description": "Backend NestJS — Pet Marketplace UK (Fase 1, sem pagamento).",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "nest start --watch",
     "build": "nest build",
@@ -12,7 +14,9 @@
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "test": "jest --passWithNoTests",
-    "test:e2e": "jest --config jest-e2e.json"
+    "test:e2e": "jest --config jest-e2e.json",
+    "db:smoke": "node scripts/db/smoke-readonly.mjs",
+    "db:run-sql": "node scripts/db/run-sql-file.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",
@@ -44,6 +48,7 @@
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "jest": "^29.7.0",
+    "pg": "^8.21.0",
     "prettier": "^3.3.3",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.3",

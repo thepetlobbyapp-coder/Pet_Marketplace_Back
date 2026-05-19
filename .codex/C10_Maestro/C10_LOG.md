@@ -22,21 +22,6 @@
 
 ---
 
-## 2026-05-18 - Bloco 2B: smoke autenticado de `/me`
-
-**Fase:** DESENVOLVIMENTO / INTEGRACAO BACKEND-SUPABASE
-**Agentes ativos:** C10_Maestro, B_BackendDomain, S_Seguranca, O_Observability
-**O que aconteceu:** Gerado token local para usuario de teste sem expor segredo; validado `GET /api/v1/me` com backend local; sincronizacao `auth.users -> public.users` executada para `admin@teste.com`; role fallback `tutor` criada em `public.user_roles`; smokes e validacoes passaram.
-**Arquivos criados/alterados:**
-  - scripts/auth/get-block2b-token.mjs
-  - scripts/db/smoke-me-authenticated.mjs
-  - package.json
-  - docs/PROGRESS.md
-  - .codex/C10_Maestro/C10_LOG.md
-**Status:** [OK]
-
----
-
 ## [DATA] — INÍCIO DO PROJETO
 
 **Fase:** CONCEPÇÃO

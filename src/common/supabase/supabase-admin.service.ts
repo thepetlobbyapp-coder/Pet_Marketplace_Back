@@ -15,6 +15,7 @@ import type {
 } from '../auth/auth-user';
 import { AuthBackendUnavailableException } from '../errors/domain.exception';
 import type { Database } from './database.types';
+import { serverSupabaseOptions } from './supabase-client-options';
 
 const DEFAULT_ROLE: Role = 'tutor';
 const VALID_ROLES: readonly Role[] = ['tutor', 'provider', 'admin'];
@@ -37,9 +38,7 @@ export class SupabaseAdminService implements OnModuleInit {
     });
 
     if (url && serviceRoleKey) {
-      this.client = createClient<Database>(url, serviceRoleKey, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+      this.client = createClient<Database>(url, serviceRoleKey, serverSupabaseOptions);
       this.logger.info('Supabase service-role client initialised.');
     } else {
       this.logger.warn(

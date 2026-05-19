@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { PinoLogger } from 'nestjs-pino';
 import type { Env } from '../../config/env.schema';
+import { serverSupabaseOptions } from '../supabase/supabase-client-options';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import type { AuthUser } from './auth-user';
 
@@ -27,9 +28,7 @@ export class SupabaseService implements OnModuleInit {
     const url = this.config.get('SUPABASE_URL', { infer: true });
     const anon = this.config.get('SUPABASE_ANON_KEY', { infer: true });
     if (url && anon) {
-      this.client = createClient(url, anon, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+      this.client = createClient(url, anon, serverSupabaseOptions);
       this.logger.info('Supabase client initialised.');
     } else {
       this.logger.warn(

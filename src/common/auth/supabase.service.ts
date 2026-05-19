@@ -3,13 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { PinoLogger } from 'nestjs-pino';
 import type { Env } from '../../config/env.schema';
-import {
-  type AuthUser,
-  type Role,
-  type UserStatus,
-} from './auth-user';
-
-const VALID_ROLES: readonly Role[] = ['tutor', 'provider', 'admin'];
+import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import type { AuthUser } from './auth-user';
 
 /**
  * Verificação de token Supabase. O backend é a autoridade de RBAC (D-006).
@@ -23,6 +18,7 @@ export class SupabaseService implements OnModuleInit {
   constructor(
     private readonly config: ConfigService<Env, true>,
     private readonly logger: PinoLogger,
+    private readonly admin: SupabaseAdminService,
   ) {
     this.logger.setContext(SupabaseService.name);
   }
@@ -43,7 +39,7 @@ export class SupabaseService implements OnModuleInit {
   }
 
   get isConfigured(): boolean {
-    return this.client !== null;
+    return this.client !== null && this.admin.isConfigured;
   }
 
   /** Resolve o usuário a partir do access token. null = token inválido. */
@@ -52,19 +48,6 @@ export class SupabaseService implements OnModuleInit {
     const { data, error } = await this.client.auth.getUser(accessToken);
     if (error || !data.user) return null;
 
-    const meta = (data.user.app_metadata ?? {}) as Record<string, unknown>;
-    const rawRoles = Array.isArray(meta.roles) ? meta.roles : [];
-    const roles = rawRoles.filter((r): r is Role =>
-      VALID_ROLES.includes(r as Role),
-    );
-    const status: UserStatus =
-      meta.status === 'blocked' ? 'blocked' : 'active';
-
-    return {
-      id: data.user.id,
-      email: data.user.email,
-      roles,
-      status,
-    };
+    return this.admin.syncAndLoadAuthUser(data.user);
   }
 }

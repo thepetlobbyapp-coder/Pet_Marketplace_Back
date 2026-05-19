@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/auth/current-user.decorator';
 import type { AuthUser } from '../common/auth/auth-user';
+import { MeResponseDto } from './dto/me-response.dto';
 
 /**
  * Bloco 1: apenas GET /me (lê o contexto autenticado).
@@ -12,8 +13,11 @@ import type { AuthUser } from '../common/auth/auth-user';
 @Controller('me')
 export class UsersController {
   @Get()
-  @ApiOkResponse({ description: 'Authenticated user and linked roles.' })
-  me(@CurrentUser() user: AuthUser): AuthUser {
-    return user;
+  @ApiOkResponse({
+    description: 'Authenticated user, database-backed roles, and safe profile summaries.',
+    type: MeResponseDto,
+  })
+  me(@CurrentUser() user: AuthUser): MeResponseDto {
+    return MeResponseDto.fromAuthUser(user);
   }
 }

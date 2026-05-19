@@ -6,6 +6,7 @@ node_modules/
 # Build / output
 dist/
 build/
+.publish/
 *.tsbuildinfo
 coverage/
 
@@ -29,5 +30,5 @@ Thumbs.db
 # Supabase local
 .supabase/
 
-# Local agent/debug artifacts
-.codex/BUG_Debugger/
+# Local agent workspace artifacts
+.codex/

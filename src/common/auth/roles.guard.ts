@@ -33,8 +33,8 @@ export class RolesGuard implements CanActivate {
     if (!user) {
       throw new ForbiddenException('No authenticated user in context.');
     }
-    if (user.status === 'blocked') {
-      throw new ForbiddenException('Account is blocked.');
+    if (user.status !== 'active') {
+      throw new ForbiddenException('Account is not active.');
     }
 
     const required = this.reflector.getAllAndOverride<Role[] | undefined>(

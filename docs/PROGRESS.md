@@ -291,3 +291,262 @@ Fornecer `SUPABASE_SERVICE_ROLE_KEY` e `DATABASE_URL`, revisar as migrations pre
 
 ### Proximo passo recomendado
 Iniciar a integracao backend-schema: criar servicos/repositorios para perfis base, sincronizacao de usuario autenticado e smoke e2e com Supabase real, sem expor service role ao cliente.
+
+---
+
+## Checkpoint 006 - Bloco 2B: backend integrado ao schema Supabase
+
+- **Data/hora:** 2026-05-18 (America/Sao_Paulo)
+- **Tarefa atual:** Integracao real do backend com `public.users`, `public.user_roles` e perfis base seguros.
+- **Agentes envolvidos:** C10_Maestro, B_BackendDomain, S_Seguranca, O_Observability
+
+### O que foi implementado
+- Criado cliente Supabase service-role server-side, separado do cliente anon usado para validar token.
+- `AuthGuard` agora considera auth configurado somente quando anon auth e service-role DB estao disponiveis.
+- Ao resolver bearer token valido, o backend sincroniza `auth.users -> public.users` usando `auth.users.id` como `public.users.id`.
+- O upsert de `public.users` atualiza identidade basica (`email`, `locale`) sem sobrescrever `status`, evitando reativar conta bloqueada/deletada.
+- Roles agora sao lidas de `public.user_roles`, que passa a ser a fonte final de RBAC.
+- Quando um usuario sincronizado nao possui roles, o backend cria fallback conservador `tutor` em `public.user_roles`.
+- `GET /api/v1/me` passa a retornar status real, locale, roles reais do banco e resumos seguros de `tutor_profiles`/`provider_profiles`.
+- `GET /api/v1/me` tambem retorna `createdAt`/`updatedAt` de `public.users` e trata `deleted_at` como status efetivo `deleted`.
+- Usuarios com `public.users.status` diferente de `active` sao bloqueados nas rotas privadas.
+- Criado smoke opt-in/read-only do Bloco 2B para validar leitura service-role e token opcional sem criar dados; sem `.env`, ele retorna `skipped`.
+- `.publish/` foi adicionado ao `.gitignore` local do backend.
+
+### Arquivos criados / alterados
+- `src/common/supabase/database.types.ts`
+- `src/common/supabase/supabase-admin.service.ts`
+- `src/common/auth/auth-user.ts`
+- `src/common/auth/supabase.service.ts`
+- `src/common/auth/roles.guard.ts`
+- `src/common/common.module.ts`
+- `scripts/db/smoke-block2b-readonly.mjs`
+- `package.json`
+- `.gitignore`
+- `docs/PROGRESS.md`
+
+### Comandos rodados
+- `git status --short`
+- `git check-ignore -v .env`
+- `pnpm typecheck`
+- `pnpm lint`
+- `pnpm build`
+- `pnpm test:e2e`
+- `pnpm db:smoke`
+- `pnpm db:smoke:block2b`
+
+### Resultado das validacoes
+- `pnpm typecheck` - passou.
+- `pnpm lint` - passou.
+- `pnpm build` - passou.
+- `pnpm test:e2e` - passou (2 testes, modo degradado sem Supabase real).
+- `pnpm db:smoke` - passou, com PostGIS/pgcrypto, tabelas esperadas, RLS ativo e sem grants de escrita para `authenticated`.
+- `pnpm db:smoke:block2b` - passou, read-only; `BLOCK2B_AUTH_ACCESS_TOKEN` nao foi fornecido, entao nao houve validacao de token real nem criacao de dados.
+
+### Pendencias reais
+- Validar `GET /api/v1/me` com um access token real de usuario de teste aprovado.
+- Se nao existir usuario de teste apropriado, pedir confirmacao antes de criar usuario/role no Supabase.
+- Expandir DTOs/contratos formais do Swagger para `/me` quando o contrato publico for congelado para Mobile/Admin.
+- Refinar perfis completos e escrita controlada nos blocos futuros.
+
+### Riscos
+- Primeiro acesso de usuario real agora cria/atualiza `public.users` e pode criar fallback `tutor`; isso e intencional, mas deve ser observado em teste controlado.
+- `public.user_roles` e a fonte final de RBAC; roles em metadata do token deixam de conceder permissao por si so.
+- O smoke real de `/me` ainda depende de um token aprovado para evitar criacao nao autorizada de dados reais.
+
+---
+
+## Checkpoint 007 - Bloco 2B: smoke autenticado de `/me`
+
+- **Data/hora:** 2026-05-18 (America/Sao_Paulo)
+- **Tarefa atual:** Validacao controlada de `GET /api/v1/me` com usuario real de teste aprovado.
+- **Agentes envolvidos:** C10_Maestro, B_BackendDomain, S_Seguranca, O_Observability
+
+### O que foi validado
+- `BLOCK2B_AUTH_ACCESS_TOKEN` foi gerado localmente para o usuario de teste `admin@teste.com` sem imprimir o token.
+- Antes da chamada autenticada, smoke read-only confirmou token valido, mas sem linha em `public.users` e sem roles em `public.user_roles`.
+- Apos confirmacao explicita do usuario, `GET /api/v1/me` foi executado contra backend local.
+- `/me` respondeu `200`.
+- A chamada criou/sincronizou `public.users` para o usuario Auth de teste.
+- A chamada criou a role fallback `tutor` em `public.user_roles`.
+- Smoke read-only posterior confirmou `optionalAuthToken: resolved_with_public_user`.
+
+### Arquivos criados / alterados
+- `scripts/auth/get-block2b-token.mjs`
+- `scripts/db/smoke-me-authenticated.mjs`
+- `package.json`
+- `docs/PROGRESS.md`
+- `.codex/C10_Maestro/C10_LOG.md`
+
+### Comandos rodados
+- `pnpm typecheck`
+- `pnpm lint`
+- `pnpm build`
+- `pnpm test:e2e`
+- `pnpm db:smoke`
+- `pnpm db:smoke:block2b`
+- `pnpm db:smoke:me`
+- Varredura final de segredos fora de `.env`
+- `git status --short`
+
+### Resultado das validacoes
+- `pnpm typecheck` - passou.
+- `pnpm lint` - passou.
+- `pnpm build` - passou.
+- `pnpm test:e2e` - passou (2 testes, modo degradado sem Supabase real).
+- `pnpm db:smoke` - passou.
+- `pnpm db:smoke:block2b` - passou antes e depois da chamada autenticada.
+- `pnpm db:smoke:me` - passou; retornou usuario ativo, locale `en-GB`, roles `["tutor"]`, sem perfis base.
+- Primeira tentativa de `pnpm db:smoke:me` falhou antes de chamar `/me` porque o build gera `dist/src/main.js`; script foi ajustado para detectar `dist/main.js` ou `dist/src/main.js`.
+
+### Pendencias reais
+- Decidir se `admin@teste.com` deve continuar como tutor de teste ou se deve receber role `admin`/outra role por fluxo controlado.
+- Criar fluxo formal de seed/test user apenas se aprovado, evitando dados manuais soltos.
+- Expandir DTO/Swagger formal de `/me` antes de Mobile/Admin dependerem do contrato.
+
+### Riscos
+- O usuario de teste agora existe em `public.users` e tem role `tutor` real no ambiente Supabase dev.
+- Access token em `.env` e temporario; pode expirar e precisar ser gerado novamente.
+- Qualquer nova chamada com usuario sem role continuara criando fallback `tutor`, por desenho atual do Bloco 2B.
+
+---
+
+## Checkpoint 008 - Contrato seguro de `/me` e e2e mockado
+
+- **Data/hora:** 2026-05-18 (America/Sao_Paulo)
+- **Tarefa atual:** Formalizacao do contrato seguro de `GET /api/v1/me` e cobertura e2e sem Supabase real.
+- **Agentes envolvidos:** C10_Maestro, B_BackendDomain, S_Seguranca, O_Observability
+
+### O que foi implementado
+- Criados DTOs explicitos para o contrato de resposta de `GET /api/v1/me`.
+- `UsersController` agora retorna `MeResponseDto` por mapper explicito, evitando vazamento acidental de campos internos.
+- Swagger `@ApiOkResponse` de `/me` agora aponta para DTO real.
+- Adicionado e2e mockado que substitui apenas `SupabaseService`, mantendo `AuthGuard` e `RolesGuard` reais.
+- Testes cobrem retorno seguro de `/me`, bloqueio de usuarios `blocked`/`deleted` e ausencia de campos proibidos como token, phone, address, location e coordinates.
+- Smoke autenticado foi ajustado para erro claro de token ausente/invalido/expirado e para informar se criou novos dados no run atual.
+
+### Contrato atual de `GET /api/v1/me`
+- `id`
+- `email`
+- `roles`
+- `status`
+- `locale`
+- `createdAt`
+- `updatedAt`
+- `profiles.tutor.id`
+- `profiles.tutor.displayName`
+- `profiles.provider.id`
+- `profiles.provider.displayName`
+- `profiles.provider.status`
+- `profiles.provider.serviceRadiusKm`
+- `profiles.provider.ratingAverage`
+- `profiles.provider.ratingCount`
+
+### Campos explicitamente fora do contrato
+- Tokens, refresh tokens ou secrets.
+- Telefone.
+- Endereco completo, `line1`, `formattedAddress`.
+- Coordenadas, `location`, `lat`, `lng`, `latitude`, `longitude`.
+- Campos internos do Supabase.
+
+### Arquivos criados / alterados
+- `src/users/dto/me-response.dto.ts`
+- `src/users/users.controller.ts`
+- `test/me.e2e-spec.ts`
+- `scripts/db/smoke-me-authenticated.mjs`
+- `docs/PROGRESS.md`
+
+### Comandos rodados
+- `git status --short`
+- `git check-ignore -v ...`
+- `pnpm typecheck`
+- `pnpm lint`
+- `pnpm build`
+- `pnpm test:e2e`
+- `pnpm db:smoke`
+- `pnpm db:smoke:block2b`
+- `pnpm db:smoke:me`
+- Varredura final de segredos fora de `.env`
+
+### Resultado das validacoes
+- `pnpm typecheck` - passou.
+- `pnpm lint` - passou.
+- `pnpm build` - passou.
+- `pnpm test:e2e` - passou (5 testes, sem Supabase real).
+- `pnpm db:smoke` - passou.
+- `pnpm db:smoke:block2b` - passou, com token opcional resolvido para public user.
+- `pnpm db:smoke:me` - passou; `createdNewDataThisRun: false`, sem criar novos dados para o usuario de teste ja sincronizado.
+
+### Pendencias reais
+- Decidir se `email` deve permanecer no contrato publico de `/me` para Mobile/Admin ou se deve ser reduzido/mascarado em etapa futura.
+- Formalizar DTOs dos proximos endpoints antes de Mobile/Admin dependerem deles.
+- Definir fluxo controlado para alterar role de `admin@teste.com`, se ele precisar virar `admin` de fato.
+
+### Riscos
+- `email` continua no retorno autenticado de `/me`; e aceitavel para o proprio usuario, mas deve ser preservado como dado pessoal em logs e consumidores.
+- O smoke autenticado depende de access token temporario em `.env`; expiracao exigira gerar novo token.
+- O workspace segue com muitas mudancas anteriores nao relacionadas e sem stage/commit neste passo.
+
+---
+
+## Checkpoint 009 - Scripts locais de gestao segura de roles
+
+- **Data/hora:** 2026-05-18 (America/Sao_Paulo)
+- **Tarefa atual:** Preparacao de ferramenta local dev-only para consultar/aplicar roles sem endpoint publico e sem migration.
+- **Agentes envolvidos:** C10_Maestro, B_BackendDomain, S_Seguranca, O_Observability
+
+### O que foi implementado
+- Criado script read-only para verificar roles por email de usuario Auth existente.
+- Criado script local dev-only para aplicar role em `public.user_roles` com `SUPABASE_SERVICE_ROLE_KEY`.
+- Script de escrita exige `ALLOW_ROLE_WRITE=CONFIRMO_ROLE_DEV`.
+- Script de escrita aceita somente roles `tutor`, `provider` e `admin`.
+- Script de escrita localiza usuario no Supabase Auth por email, garante `public.users` se ausente e recusa adicionar roles para usuario publico bloqueado/deletado.
+- Scripts mascaram email/id e nao imprimem tokens/chaves/senhas.
+- `package.json` recebeu aliases `auth:roles:check` e `auth:roles:set`.
+- E2E de `/me` passou a cobrir multiplas roles no contrato sem Supabase real.
+
+### Validacao com `admin@teste.com`
+- Verificacao read-only executada com sucesso.
+- Estado observado: `public.users` existe, status `active`, roles `["tutor"]`.
+- Role `admin` **nao foi aplicada** porque o usuario ainda precisa confirmar explicitamente a escrita.
+- `pnpm db:smoke:me` confirmou `/me` com roles `["tutor"]` e `createdNewDataThisRun: false`.
+
+### Arquivos criados / alterados
+- `scripts/auth/check-user-roles.mjs`
+- `scripts/auth/set-user-role.mjs`
+- `package.json`
+- `test/me.e2e-spec.ts`
+- `docs/PROGRESS.md`
+
+### Comandos rodados
+- `git status --short`
+- `git check-ignore -v ...`
+- `$env:TARGET_USER_EMAIL='admin@teste.com'; pnpm auth:roles:check`
+- `pnpm typecheck`
+- `pnpm lint`
+- `pnpm build`
+- `pnpm test:e2e`
+- `pnpm db:smoke`
+- `pnpm db:smoke:block2b`
+- `pnpm db:smoke:me`
+- Varredura final de segredos fora de `.env`
+
+### Resultado das validacoes
+- `pnpm typecheck` - passou.
+- `pnpm lint` - passou.
+- `pnpm build` - passou.
+- `pnpm test:e2e` - passou (6 testes, sem Supabase real).
+- `pnpm db:smoke` - passou.
+- `pnpm db:smoke:block2b` - passou.
+- `pnpm db:smoke:me` - passou; token valido; sem criacao de novos dados.
+
+### Pendencias reais
+- Role `admin` aplicada em `admin@teste.com` apos confirmacao explicita do usuario.
+- Verificacao read-only confirmou roles `["tutor", "admin"]`.
+- `pnpm db:smoke:me` confirmou que `/me` retorna roles reais `["tutor", "admin"]` e `createdNewDataThisRun: false`.
+- Proximo passo: criar endpoints/admin guards reais somente quando o bloco de Admin for iniciado.
+
+### Riscos
+- Script `set-user-role` usa service role e deve permanecer restrito ao backend/local, nunca Mobile/Admin.
+- `auth.admin.listUsers` varre usuarios Auth paginados para localizar email; adequado para dev, mas nao deve virar fluxo de runtime.
+- AdminModule/endpoints admin continuam fora de escopo apesar de o usuario de teste ja possuir role `admin`.

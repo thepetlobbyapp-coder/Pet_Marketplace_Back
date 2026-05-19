@@ -9,13 +9,17 @@
   "scripts": {
     "dev": "nest start --watch",
     "build": "nest build",
-    "start": "node dist/main.js",
+    "start": "node dist/src/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "test": "jest --passWithNoTests",
     "test:e2e": "jest --config jest-e2e.json",
+    "auth:roles:check": "node scripts/auth/check-user-roles.mjs",
+    "auth:roles:set": "node scripts/auth/set-user-role.mjs",
     "db:smoke": "node scripts/db/smoke-readonly.mjs",
+    "db:smoke:block2b": "node scripts/db/smoke-block2b-readonly.mjs",
+    "db:smoke:me": "node scripts/db/smoke-me-authenticated.mjs",
     "db:run-sql": "node scripts/db/run-sql-file.mjs"
   },
   "dependencies": {

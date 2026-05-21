@@ -3,8 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "description": "Backend NestJS — Pet Marketplace UK (Fase 1, sem pagamento).",
+  "packageManager": "pnpm@10.30.3",
   "engines": {
-    "node": ">=20"
+    "node": "22.x",
+    "pnpm": "10.30.3"
   },
   "scripts": {
     "dev": "nest start --watch",

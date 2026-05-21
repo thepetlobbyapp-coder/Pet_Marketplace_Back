@@ -37,7 +37,7 @@ async function bootstrap(): Promise<void> {
     SwaggerModule.setup(`${API_PREFIX}/docs`, app, doc);
   }
 
-  const port = config.get('API_PORT', { infer: true });
+  const port = process.env.PORT ?? config.get('API_PORT', { infer: true }) ?? 3000;
   await app.listen(port, '0.0.0.0');
 }
 

@@ -1,4 +1,8 @@
-import { Injectable, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   createClient,
@@ -16,6 +20,7 @@ import type {
 import { AuthBackendUnavailableException } from '../errors/domain.exception';
 import type { Database } from './database.types';
 import { serverSupabaseOptions } from './supabase-client-options';
+import type { UpdateMeInput } from '../../users/dto/update-me-request.dto';
 
 const DEFAULT_ROLE: Role = 'tutor';
 const VALID_ROLES: readonly Role[] = ['tutor', 'provider', 'admin'];
@@ -38,7 +43,11 @@ export class SupabaseAdminService implements OnModuleInit {
     });
 
     if (url && serviceRoleKey) {
-      this.client = createClient<Database>(url, serviceRoleKey, serverSupabaseOptions);
+      this.client = createClient<Database>(
+        url,
+        serviceRoleKey,
+        serverSupabaseOptions,
+      );
       this.logger.info('Supabase service-role client initialised.');
     } else {
       this.logger.warn(
@@ -58,30 +67,85 @@ export class SupabaseAdminService implements OnModuleInit {
       throw new UnauthorizedException('Authenticated user has no email.');
     }
 
-    const upsert = await client
+    const { data: existingUser, error: existingError } = await client
       .from('users')
-      .upsert(
-        {
-          id: authUser.id,
-          email,
-          locale: this.resolveLocale(authUser),
-        },
-        { onConflict: 'id' },
-      )
-      .select('id');
+      .select('id,email')
+      .eq('id', authUser.id)
+      .maybeSingle();
 
-    if (upsert.error) {
+    if (existingError) {
       this.logger.error(
-        { code: upsert.error.code },
+        { code: existingError.code },
         'Failed to sync authenticated user.',
       );
       throw new AuthBackendUnavailableException();
     }
 
+    if (existingUser) {
+      if (existingUser.email !== email) {
+        const updateEmail = await client
+          .from('users')
+          .update({ email, updated_at: new Date().toISOString() })
+          .eq('id', authUser.id)
+          .select('id');
+
+        if (updateEmail.error) {
+          this.logger.error(
+            { code: updateEmail.error.code },
+            'Failed to update authenticated user email.',
+          );
+          throw new AuthBackendUnavailableException();
+        }
+      }
+    } else {
+      const insert = await client
+        .from('users')
+        .insert({
+          id: authUser.id,
+          email,
+          locale: this.resolveLocale(authUser),
+        })
+        .select('id');
+
+      if (insert.error) {
+        this.logger.error(
+          { code: insert.error.code },
+          'Failed to create authenticated user.',
+        );
+        throw new AuthBackendUnavailableException();
+      }
+    }
+
+    return this.loadAuthUserById(authUser.id);
+  }
+
+  async updateOwnUser(userId: string, input: UpdateMeInput): Promise<AuthUser> {
+    const client = this.getClient();
+    const { error } = await client
+      .from('users')
+      .update({
+        locale: input.locale,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId)
+      .is('deleted_at', null)
+      .select('id')
+      .single();
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to update public user.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return this.loadAuthUserById(userId);
+  }
+
+  private async loadAuthUserById(userId: string): Promise<AuthUser> {
+    const client = this.getClient();
     const { data: user, error: userError } = await client
       .from('users')
       .select('id,email,status,locale,created_at,updated_at,deleted_at')
-      .eq('id', authUser.id)
+      .eq('id', userId)
       .single();
 
     if (userError || !user) {
@@ -162,7 +226,9 @@ export class SupabaseAdminService implements OnModuleInit {
     return [fallback.data.role];
   }
 
-  private async loadSafeProfiles(userId: string): Promise<AuthUser['profiles']> {
+  private async loadSafeProfiles(
+    userId: string,
+  ): Promise<AuthUser['profiles']> {
     const [tutor, provider] = await Promise.all([
       this.loadTutorProfile(userId),
       this.loadProviderProfile(userId),

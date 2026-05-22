@@ -12,6 +12,10 @@ import {
 import { PinoLogger } from 'nestjs-pino';
 import type { Env } from '../../config/env.schema';
 import type {
+  TutorProfileInput,
+  TutorProfileRecord,
+} from '../../users/dto/tutor-profile.dto';
+import type {
   AuthUser,
   ProviderProfileSummary,
   Role,
@@ -31,6 +35,8 @@ const VALID_ROLES: readonly Role[] = ['tutor', 'provider', 'admin'];
 /** Colunas seguras de `public.pets` — exclui `tutor_profile_id`/`deleted_at`. */
 const PET_COLUMNS =
   'id,name,species,breed,size,age_range,notes,created_at,updated_at' as const;
+const TUTOR_PROFILE_COLUMNS =
+  'id,display_name,created_at,updated_at' as const;
 
 @Injectable()
 export class SupabaseAdminService implements OnModuleInit {
@@ -145,6 +151,51 @@ export class SupabaseAdminService implements OnModuleInit {
     }
 
     return this.loadAuthUserById(userId);
+  }
+
+  async createOwnTutorProfile(
+    userId: string,
+    input: TutorProfileInput,
+  ): Promise<TutorProfileRecord | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('tutor_profiles')
+      .insert({
+        user_id: userId,
+        display_name: input.displayName,
+      })
+      .select(TUTOR_PROFILE_COLUMNS)
+      .single();
+
+    if (error) {
+      if (error.code === '23505') return null;
+      this.logger.error({ code: error.code }, 'Failed to create tutor profile.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data;
+  }
+
+  async updateOwnTutorProfile(
+    userId: string,
+    input: TutorProfileInput,
+  ): Promise<TutorProfileRecord | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('tutor_profiles')
+      .update({
+        display_name: input.displayName,
+      })
+      .eq('user_id', userId)
+      .select(TUTOR_PROFILE_COLUMNS)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to update tutor profile.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data ?? null;
   }
 
   /**

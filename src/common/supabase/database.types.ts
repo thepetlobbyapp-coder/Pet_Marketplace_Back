@@ -78,6 +78,51 @@ export interface Database {
         };
         Relationships: [];
       };
+      addresses: {
+        Row: {
+          id: string;
+          user_id: string;
+          label: string | null;
+          country_code: string;
+          line1: string | null;
+          city: string | null;
+          postcode: string | null;
+          formatted_address: string | null;
+          location: unknown;
+          location_precision: Database['public']['Enums']['location_precision'];
+          public_area_label: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          label?: string | null;
+          country_code?: string;
+          line1?: string | null;
+          city?: string | null;
+          postcode?: string | null;
+          formatted_address?: string | null;
+          location: unknown;
+          location_precision?: Database['public']['Enums']['location_precision'];
+          public_area_label?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          label?: string | null;
+          country_code?: string;
+          line1?: string | null;
+          city?: string | null;
+          postcode?: string | null;
+          formatted_address?: string | null;
+          location?: unknown;
+          location_precision?: Database['public']['Enums']['location_precision'];
+          public_area_label?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       pets: {
         Row: {
           id: string;
@@ -157,6 +202,7 @@ export interface Database {
       provider_status: 'active' | 'paused' | 'blocked' | 'deleted';
       pet_species: 'dog' | 'cat' | 'other';
       pet_size: 'small' | 'medium' | 'large' | 'giant' | 'unknown';
+      location_precision: 'exact' | 'postcode' | 'approximate';
     };
     CompositeTypes: Record<string, never>;
   };

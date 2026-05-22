@@ -28,6 +28,13 @@ import type { UpdateMeInput } from '../../users/dto/update-me-request.dto';
 import type { CreatePetInput } from '../../pets/dto/create-pet-request.dto';
 import type { UpdatePetInput } from '../../pets/dto/update-pet-request.dto';
 import type { PetRecord } from '../../pets/dto/pet-fields';
+import type { CreateAddressInput } from '../../addresses/dto/create-address-request.dto';
+import type { UpdateAddressInput } from '../../addresses/dto/update-address-request.dto';
+import type {
+  AddressRecord,
+  AddressWithDefaultRecord,
+} from '../../addresses/dto/address-fields';
+import { addressValidationError } from '../../addresses/dto/address-fields';
 
 const DEFAULT_ROLE: Role = 'tutor';
 const VALID_ROLES: readonly Role[] = ['tutor', 'provider', 'admin'];
@@ -37,6 +44,8 @@ const PET_COLUMNS =
   'id,name,species,breed,size,age_range,notes,created_at,updated_at' as const;
 const TUTOR_PROFILE_COLUMNS =
   'id,display_name,created_at,updated_at' as const;
+const ADDRESS_COLUMNS =
+  'id,label,country_code,city,postcode,public_area_label,location_precision,created_at,updated_at' as const;
 
 @Injectable()
 export class SupabaseAdminService implements OnModuleInit {
@@ -196,6 +205,130 @@ export class SupabaseAdminService implements OnModuleInit {
     }
 
     return data ?? null;
+  }
+
+  async listOwnAddresses(userId: string): Promise<AddressWithDefaultRecord[]> {
+    const client = this.getClient();
+    const [addressesResult, defaultAddressId] = await Promise.all([
+      client
+        .from('addresses')
+        .select(ADDRESS_COLUMNS)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true }),
+      this.loadTutorDefaultAddressId(userId),
+    ]);
+
+    if (addressesResult.error) {
+      this.logger.error(
+        { code: addressesResult.error.code },
+        'Failed to list addresses.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return this.withDefaultAddressFlag(
+      addressesResult.data ?? [],
+      defaultAddressId,
+    );
+  }
+
+  async createOwnAddress(
+    userId: string,
+    tutorProfileId: string | null,
+    input: CreateAddressInput,
+  ): Promise<AddressWithDefaultRecord> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('addresses')
+      .insert({
+        user_id: userId,
+        label: input.label,
+        country_code: input.countryCode,
+        city: input.city,
+        postcode: input.postcode,
+        public_area_label: input.publicAreaLabel,
+        location_precision: input.locationPrecision,
+        location: toEwktPoint(input.longitude, input.latitude),
+      })
+      .select(ADDRESS_COLUMNS)
+      .single();
+
+    if (error || !data) {
+      this.logger.error({ code: error?.code }, 'Failed to create address.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    const defaultAddressId =
+      input.setAsDefaultTutorAddress && tutorProfileId
+        ? await this.setTutorDefaultAddress(tutorProfileId, data.id)
+        : await this.loadTutorDefaultAddressId(userId);
+
+    return this.withDefaultAddressFlag([data], defaultAddressId)[0]!;
+  }
+
+  async updateOwnAddress(
+    userId: string,
+    tutorProfileId: string | null,
+    addressId: string,
+    input: UpdateAddressInput,
+  ): Promise<AddressWithDefaultRecord | null> {
+    const client = this.getClient();
+    const existing = await this.loadOwnAddress(userId, addressId);
+    if (!existing) return null;
+
+    const nextPostcode =
+      input.postcode !== undefined ? input.postcode : existing.postcode;
+    const nextCity = input.city !== undefined ? input.city : existing.city;
+    const nextPublicAreaLabel =
+      input.publicAreaLabel !== undefined
+        ? input.publicAreaLabel
+        : existing.public_area_label;
+
+    if (!nextPostcode && !nextCity && !nextPublicAreaLabel) {
+      throw addressValidationError(
+        'At least one of postcode, city or publicAreaLabel must remain readable.',
+      );
+    }
+
+    const patch: Database['public']['Tables']['addresses']['Update'] = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (input.label !== undefined) patch.label = input.label;
+    if (input.countryCode !== undefined) patch.country_code = input.countryCode;
+    if (input.city !== undefined) patch.city = input.city;
+    if (input.postcode !== undefined) patch.postcode = input.postcode;
+    if (input.publicAreaLabel !== undefined) {
+      patch.public_area_label = input.publicAreaLabel;
+    }
+    if (input.locationPrecision !== undefined) {
+      patch.location_precision = input.locationPrecision;
+    }
+    if (input.latitude !== undefined && input.longitude !== undefined) {
+      patch.location = toEwktPoint(input.longitude, input.latitude);
+    }
+
+    const { data, error } = await client
+      .from('addresses')
+      .update(patch)
+      .eq('id', addressId)
+      .eq('user_id', userId)
+      .select(ADDRESS_COLUMNS)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to update address.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    if (!data) return null;
+
+    const defaultAddressId =
+      input.setAsDefaultTutorAddress && tutorProfileId
+        ? await this.setTutorDefaultAddress(tutorProfileId, data.id)
+        : await this.loadTutorDefaultAddressId(userId);
+
+    return this.withDefaultAddressFlag([data], defaultAddressId)[0]!;
   }
 
   /**
@@ -424,6 +557,80 @@ export class SupabaseAdminService implements OnModuleInit {
     };
   }
 
+  private async loadTutorDefaultAddressId(
+    userId: string,
+  ): Promise<string | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('tutor_profiles')
+      .select('default_address_id')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to load tutor default address.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data?.default_address_id ?? null;
+  }
+
+  private async loadOwnAddress(
+    userId: string,
+    addressId: string,
+  ): Promise<AddressRecord | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('addresses')
+      .select(ADDRESS_COLUMNS)
+      .eq('id', addressId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to load address.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data ?? null;
+  }
+
+  private async setTutorDefaultAddress(
+    tutorProfileId: string,
+    addressId: string,
+  ): Promise<string> {
+    const client = this.getClient();
+    const { error } = await client
+      .from('tutor_profiles')
+      .update({ default_address_id: addressId })
+      .eq('id', tutorProfileId)
+      .select('id')
+      .single();
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to set tutor default address.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return addressId;
+  }
+
+  private withDefaultAddressFlag(
+    addresses: AddressRecord[],
+    defaultAddressId: string | null,
+  ): AddressWithDefaultRecord[] {
+    return addresses.map((address) => ({
+      ...address,
+      isDefaultTutorAddress: address.id === defaultAddressId,
+    }));
+  }
+
   private async loadProviderProfile(
     userId: string,
   ): Promise<ProviderProfileSummary | null> {
@@ -458,4 +665,8 @@ export class SupabaseAdminService implements OnModuleInit {
   private readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim() ? value : null;
   }
+}
+
+function toEwktPoint(longitude: number, latitude: number): string {
+  return `SRID=4326;POINT(${longitude} ${latitude})`;
 }

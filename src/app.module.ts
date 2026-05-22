@@ -11,6 +11,7 @@ import { RolesGuard } from './common/auth/roles.guard';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { PetsModule } from './pets/pets.module';
 
 /**
  * Composição raiz — Bloco 1.
@@ -30,6 +31,7 @@ import { UsersModule } from './users/users.module';
     HealthModule,
     AuthModule,
     UsersModule,
+    PetsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

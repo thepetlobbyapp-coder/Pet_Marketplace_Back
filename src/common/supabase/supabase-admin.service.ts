@@ -21,9 +21,16 @@ import { AuthBackendUnavailableException } from '../errors/domain.exception';
 import type { Database } from './database.types';
 import { serverSupabaseOptions } from './supabase-client-options';
 import type { UpdateMeInput } from '../../users/dto/update-me-request.dto';
+import type { CreatePetInput } from '../../pets/dto/create-pet-request.dto';
+import type { UpdatePetInput } from '../../pets/dto/update-pet-request.dto';
+import type { PetRecord } from '../../pets/dto/pet-fields';
 
 const DEFAULT_ROLE: Role = 'tutor';
 const VALID_ROLES: readonly Role[] = ['tutor', 'provider', 'admin'];
+
+/** Colunas seguras de `public.pets` — exclui `tutor_profile_id`/`deleted_at`. */
+const PET_COLUMNS =
+  'id,name,species,breed,size,age_range,notes,created_at,updated_at' as const;
 
 @Injectable()
 export class SupabaseAdminService implements OnModuleInit {
@@ -138,6 +145,110 @@ export class SupabaseAdminService implements OnModuleInit {
     }
 
     return this.loadAuthUserById(userId);
+  }
+
+  /**
+   * Pets do tutor. Toda query é escopada por `tutor_profile_id` e ignora
+   * registros com `deleted_at`, garantindo que o tutor só vê os próprios pets.
+   */
+  async listPets(tutorProfileId: string): Promise<PetRecord[]> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('pets')
+      .select(PET_COLUMNS)
+      .eq('tutor_profile_id', tutorProfileId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to list pets.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data ?? [];
+  }
+
+  async createPet(
+    tutorProfileId: string,
+    input: CreatePetInput,
+  ): Promise<PetRecord> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('pets')
+      .insert({
+        tutor_profile_id: tutorProfileId,
+        name: input.name,
+        species: input.species,
+        size: input.size,
+        breed: input.breed,
+        age_range: input.ageRange,
+        notes: input.notes,
+      })
+      .select(PET_COLUMNS)
+      .single();
+
+    if (error || !data) {
+      this.logger.error({ code: error?.code }, 'Failed to create pet.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data;
+  }
+
+  /** Atualiza um pet do tutor. `null` = pet inexistente ou de outro tutor. */
+  async updatePet(
+    tutorProfileId: string,
+    petId: string,
+    input: UpdatePetInput,
+  ): Promise<PetRecord | null> {
+    const client = this.getClient();
+    const patch: Database['public']['Tables']['pets']['Update'] = {
+      updated_at: new Date().toISOString(),
+    };
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.species !== undefined) patch.species = input.species;
+    if (input.size !== undefined) patch.size = input.size;
+    if (input.breed !== undefined) patch.breed = input.breed;
+    if (input.ageRange !== undefined) patch.age_range = input.ageRange;
+    if (input.notes !== undefined) patch.notes = input.notes;
+
+    const { data, error } = await client
+      .from('pets')
+      .update(patch)
+      .eq('id', petId)
+      .eq('tutor_profile_id', tutorProfileId)
+      .is('deleted_at', null)
+      .select(PET_COLUMNS)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to update pet.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data ?? null;
+  }
+
+  /** Soft delete via `deleted_at`. `false` = pet inexistente ou de outro tutor. */
+  async softDeletePet(
+    tutorProfileId: string,
+    petId: string,
+  ): Promise<boolean> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('pets')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', petId)
+      .eq('tutor_profile_id', tutorProfileId)
+      .is('deleted_at', null)
+      .select('id');
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to delete pet.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return (data?.length ?? 0) > 0;
   }
 
   private async loadAuthUserById(userId: string): Promise<AuthUser> {

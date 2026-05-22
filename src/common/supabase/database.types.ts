@@ -78,6 +78,41 @@ export interface Database {
         };
         Relationships: [];
       };
+      pets: {
+        Row: {
+          id: string;
+          tutor_profile_id: string;
+          name: string;
+          species: Database['public']['Enums']['pet_species'];
+          breed: string | null;
+          size: Database['public']['Enums']['pet_size'];
+          age_range: string | null;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          tutor_profile_id: string;
+          name: string;
+          species: Database['public']['Enums']['pet_species'];
+          breed?: string | null;
+          size?: Database['public']['Enums']['pet_size'];
+          age_range?: string | null;
+          notes?: string | null;
+        };
+        Update: {
+          name?: string;
+          species?: Database['public']['Enums']['pet_species'];
+          breed?: string | null;
+          size?: Database['public']['Enums']['pet_size'];
+          age_range?: string | null;
+          notes?: string | null;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
       provider_profiles: {
         Row: {
           id: string;
@@ -120,6 +155,8 @@ export interface Database {
       user_status: 'active' | 'blocked' | 'deleted';
       profile_type: 'tutor' | 'provider' | 'admin';
       provider_status: 'active' | 'paused' | 'blocked' | 'deleted';
+      pet_species: 'dog' | 'cat' | 'other';
+      pet_size: 'small' | 'medium' | 'large' | 'giant' | 'unknown';
     };
     CompositeTypes: Record<string, never>;
   };

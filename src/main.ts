@@ -20,7 +20,10 @@ async function bootstrap(): Promise<void> {
 
   const originsRaw = config.get('CORS_ALLOWED_ORIGINS', { infer: true });
   const origin = originsRaw
-    ? originsRaw.split(',').map((o) => o.trim())
+    ? originsRaw
+        .split(',')
+        .map((o) => o.trim())
+        .filter(Boolean)
     : [config.get('API_BASE_URL', { infer: true })];
   app.enableCors({ origin, credentials: true });
 
@@ -37,7 +40,8 @@ async function bootstrap(): Promise<void> {
     SwaggerModule.setup(`${API_PREFIX}/docs`, app, doc);
   }
 
-  const port = process.env.PORT ?? config.get('API_PORT', { infer: true }) ?? 3000;
+  const port =
+    process.env.PORT ?? config.get('API_PORT', { infer: true }) ?? 3000;
   await app.listen(port, '0.0.0.0');
 }
 

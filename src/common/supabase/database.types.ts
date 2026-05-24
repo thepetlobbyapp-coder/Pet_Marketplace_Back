@@ -77,6 +77,41 @@ export interface Database {
         };
         Relationships: [];
       };
+      account_deletion_requests: {
+        Row: {
+          id: string;
+          user_id: string;
+          status: Database['public']['Enums']['account_deletion_request_status'];
+          requested_at: string;
+          estimated_completion_at: string;
+          processing_started_at: string | null;
+          completed_at: string | null;
+          internal_notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          status?: Database['public']['Enums']['account_deletion_request_status'];
+          requested_at?: string;
+          estimated_completion_at?: string;
+          processing_started_at?: string | null;
+          completed_at?: string | null;
+          internal_notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          status?: Database['public']['Enums']['account_deletion_request_status'];
+          estimated_completion_at?: string;
+          processing_started_at?: string | null;
+          completed_at?: string | null;
+          internal_notes?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       tutor_profiles: {
         Row: {
           id: string;
@@ -350,6 +385,7 @@ export interface Database {
     Enums: {
       user_status: 'active' | 'blocked' | 'deleted';
       profile_type: 'tutor' | 'provider' | 'admin';
+      account_deletion_request_status: 'pending' | 'processing' | 'done';
       provider_status: 'active' | 'paused' | 'blocked' | 'deleted';
       provider_category: 'walk' | 'sitting' | 'transport' | 'boarding';
       booking_status: 'requested' | 'confirmed' | 'cancelled' | 'completed';

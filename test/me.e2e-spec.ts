@@ -9,6 +9,7 @@ import type {
   TutorProfileInput,
   TutorProfileRecord,
 } from '../src/users/dto/tutor-profile.dto';
+import type { AccountDeletionRequestRecord } from '../src/users/dto/account-deletion-request-response.dto';
 
 const ACTIVE_USER: AuthUser = {
   id: '56e4ff57-5355-47bb-904b-27ebde394bf7',
@@ -51,6 +52,7 @@ const EXPECTED_TUTOR_PROFILE = {
 describe('Me (e2e)', () => {
   let app: INestApplication;
   let resolvedUser: AuthUser | null;
+  let deletionRequest: AccountDeletionRequestRecord | null;
 
   const supabaseMock = {
     get isConfigured(): boolean {
@@ -66,6 +68,11 @@ describe('Me (e2e)', () => {
         updatedAt: '2026-05-18T21:00:00.000Z',
       }),
     ),
+    getOwnDeletionRequest: jest.fn(async () => deletionRequest),
+    requestOwnAccountDeletion: jest.fn(async () => {
+      deletionRequest ??= createDeletionRequestRow();
+      return deletionRequest;
+    }),
     createOwnTutorProfile: jest.fn(
       async (_userId: string, input: TutorProfileInput) => {
         const row = {
@@ -106,8 +113,11 @@ describe('Me (e2e)', () => {
 
   beforeEach(() => {
     resolvedUser = ACTIVE_USER;
+    deletionRequest = null;
     supabaseMock.resolveUser.mockClear();
     supabaseAdminMock.updateOwnUser.mockClear();
+    supabaseAdminMock.getOwnDeletionRequest.mockClear();
+    supabaseAdminMock.requestOwnAccountDeletion.mockClear();
     supabaseAdminMock.createOwnTutorProfile.mockClear();
     supabaseAdminMock.updateOwnTutorProfile.mockClear();
   });
@@ -198,6 +208,64 @@ describe('Me (e2e)', () => {
 
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
     expect(supabaseAdminMock.updateOwnUser).not.toHaveBeenCalled();
+  });
+
+  it('GET /api/v1/me/deletion-request returns 404 when no request exists', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/me/deletion-request')
+      .set('Authorization', 'Bearer test-token')
+      .expect(404);
+
+    expect(res.body.error.code).toBe('NOT_FOUND');
+    expect(supabaseAdminMock.getOwnDeletionRequest).toHaveBeenCalledWith(
+      ACTIVE_USER.id,
+    );
+  });
+
+  it('POST /api/v1/me/deletion-request records a safe idempotent request', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/me/deletion-request')
+      .set('Authorization', 'Bearer test-token')
+      .expect(200);
+
+    expect(res.body).toEqual({
+      id: 'df739f4c-cd08-42ac-8af6-cdf7875e3030',
+      status: 'pending',
+      requestedAt: '2026-05-24T18:00:00.000Z',
+      estimatedCompletionAt: '2026-06-23T18:00:00.000Z',
+      processingStartedAt: null,
+      completedAt: null,
+      updatedAt: '2026-05-24T18:00:00.000Z',
+    });
+    expect(supabaseAdminMock.requestOwnAccountDeletion).toHaveBeenCalledWith(
+      ACTIVE_USER.id,
+    );
+    expectForbiddenFieldsAbsent(res.body);
+
+    const second = await request(app.getHttpServer())
+      .post('/api/v1/me/deletion-request')
+      .set('Authorization', 'Bearer test-token')
+      .expect(200);
+
+    expect(second.body).toEqual(res.body);
+  });
+
+  it('GET /api/v1/me/deletion-request returns the current request status', async () => {
+    deletionRequest = {
+      ...createDeletionRequestRow(),
+      status: 'processing',
+      processing_started_at: '2026-05-25T09:00:00.000Z',
+      updated_at: '2026-05-25T09:00:00.000Z',
+    };
+
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/me/deletion-request')
+      .set('Authorization', 'Bearer test-token')
+      .expect(200);
+
+    expect(res.body.status).toBe('processing');
+    expect(res.body.processingStartedAt).toBe('2026-05-25T09:00:00.000Z');
+    expectForbiddenFieldsAbsent(res.body);
   });
 
   it('POST /api/v1/me/tutor-profile creates the authenticated tutor profile', async () => {
@@ -355,6 +423,8 @@ function expectForbiddenFieldsAbsent(value: unknown): void {
     'user_id',
     'defaultAddressId',
     'default_address_id',
+    'internalNotes',
+    'internal_notes',
     'metadata',
     'serviceRole',
   ]);
@@ -403,6 +473,18 @@ function expectTutorProfileSafePayload(value: unknown): void {
   for (const key of collectKeys(value)) {
     expect(forbidden.has(key)).toBe(false);
   }
+}
+
+function createDeletionRequestRow(): AccountDeletionRequestRecord {
+  return {
+    id: 'df739f4c-cd08-42ac-8af6-cdf7875e3030',
+    status: 'pending',
+    requested_at: '2026-05-24T18:00:00.000Z',
+    estimated_completion_at: '2026-06-23T18:00:00.000Z',
+    processing_started_at: null,
+    completed_at: null,
+    updated_at: '2026-05-24T18:00:00.000Z',
+  };
 }
 
 function withoutTutorProfile(): AuthUser {

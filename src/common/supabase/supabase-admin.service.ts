@@ -16,6 +16,7 @@ import type {
   TutorProfileInput,
   TutorProfileRecord,
 } from '../../users/dto/tutor-profile.dto';
+import type { AccountDeletionRequestRecord } from '../../users/dto/account-deletion-request-response.dto';
 import type {
   AuthUser,
   ProviderProfileSummary,
@@ -68,6 +69,8 @@ const TUTOR_PROFILE_COLUMNS =
 const ADDRESS_COLUMNS =
   'id,label,country_code,city,postcode,public_area_label,location_precision,created_at,updated_at' as const;
 /** Colunas seguras de `public.bookings` — exclui `tutor_profile_id`. */
+const ACCOUNT_DELETION_REQUEST_COLUMNS =
+  'id,status,requested_at,estimated_completion_at,processing_started_at,completed_at,updated_at' as const;
 const BOOKING_COLUMNS =
   'id,provider_id,pet_id,service_label,booking_date,time_slot_id,status,created_at,updated_at' as const;
 /** Status de booking que ainda ocupam o slot (não cancelado/concluído). */
@@ -193,6 +196,60 @@ export class SupabaseAdminService implements OnModuleInit {
     }
 
     return this.loadAuthUserById(userId);
+  }
+
+  async getOwnDeletionRequest(
+    userId: string,
+  ): Promise<AccountDeletionRequestRecord | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('account_deletion_requests')
+      .select(ACCOUNT_DELETION_REQUEST_COLUMNS)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to load account deletion request.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data ?? null;
+  }
+
+  async requestOwnAccountDeletion(
+    userId: string,
+  ): Promise<AccountDeletionRequestRecord> {
+    const client = this.getClient();
+    const existingRequest = await this.getOwnDeletionRequest(userId);
+    if (existingRequest) return existingRequest;
+
+    const { data, error } = await client
+      .from('account_deletion_requests')
+      .insert({
+        user_id: userId,
+        estimated_completion_at: this.estimateDeletionCompletionAt(),
+      })
+      .select(ACCOUNT_DELETION_REQUEST_COLUMNS)
+      .single();
+
+    if (error || !data) {
+      if (error?.code === '23505') {
+        const createdByConcurrentRequest =
+          await this.getOwnDeletionRequest(userId);
+        if (createdByConcurrentRequest) return createdByConcurrentRequest;
+      }
+
+      this.logger.error(
+        { code: error?.code },
+        'Failed to create account deletion request.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data;
   }
 
   async createOwnTutorProfile(
@@ -1086,6 +1143,11 @@ export class SupabaseAdminService implements OnModuleInit {
 
   private readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim() ? value : null;
+  }
+
+  private estimateDeletionCompletionAt(): string {
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    return new Date(Date.now() + thirtyDaysMs).toISOString();
   }
 }
 

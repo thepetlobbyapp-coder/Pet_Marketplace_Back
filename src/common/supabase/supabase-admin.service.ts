@@ -252,6 +252,34 @@ export class SupabaseAdminService implements OnModuleInit {
     return data;
   }
 
+  async requestPublicAccountDeletionByEmail(email: string): Promise<{
+    userId: string | null;
+    requestId: string | null;
+  }> {
+    const client = this.getClient();
+    const { data: user, error } = await client
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to resolve public account deletion request.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    if (!user) {
+      return { userId: null, requestId: null };
+    }
+
+    const request = await this.requestOwnAccountDeletion(user.id);
+    return { userId: user.id, requestId: request.id };
+  }
+
   async createOwnTutorProfile(
     userId: string,
     input: TutorProfileInput,

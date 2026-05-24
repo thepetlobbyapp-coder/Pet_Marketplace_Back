@@ -16,6 +16,7 @@ import { AddressesModule } from './addresses/addresses.module';
 import { ProvidersModule } from './providers/providers.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { ConversationsModule } from './conversations/conversations.module';
+import { AccountDeletionModule } from './account-deletion/account-deletion.module';
 
 /**
  * Composição raiz — Bloco 1.
@@ -40,6 +41,7 @@ import { ConversationsModule } from './conversations/conversations.module';
     ProvidersModule,
     BookingsModule,
     ConversationsModule,
+    AccountDeletionModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

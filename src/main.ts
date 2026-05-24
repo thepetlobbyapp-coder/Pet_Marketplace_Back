@@ -6,8 +6,7 @@ import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import type { Env } from './config/env.schema';
-
-const API_PREFIX = 'api/v1';
+import { API_PREFIX, GLOBAL_PREFIX_EXCLUDES } from './http-prefix';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -15,7 +14,7 @@ async function bootstrap(): Promise<void> {
 
   const config = app.get<ConfigService<Env, true>>(ConfigService);
 
-  app.setGlobalPrefix(API_PREFIX);
+  app.setGlobalPrefix(API_PREFIX, { exclude: GLOBAL_PREFIX_EXCLUDES });
   app.use(helmet());
 
   const originsRaw = config.get('CORS_ALLOWED_ORIGINS', { infer: true });

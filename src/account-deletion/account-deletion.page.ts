@@ -159,6 +159,18 @@ export function renderAccountDeletionPage(
         background: var(--accent-strong);
       }
 
+      .legal-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 18px;
+        margin-top: 20px;
+      }
+
+      a {
+        color: var(--accent);
+        font-weight: 700;
+      }
+
       .fine-print {
         font-size: 0.92rem;
         margin-top: 20px;
@@ -224,6 +236,10 @@ export function renderAccountDeletionPage(
             For privacy, the confirmation does not reveal whether an account
             exists for the email address submitted.
           </p>
+          <nav class="legal-links" aria-label="Legal pages">
+            <a href="/privacy">Privacy Policy</a>
+            <a href="/terms">Terms of Use</a>
+          </nav>
         </div>
       </section>
     </main>

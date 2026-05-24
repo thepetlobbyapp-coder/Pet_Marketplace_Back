@@ -72,6 +72,8 @@ describe('Public account deletion (e2e)', () => {
       'action="/api/v1/account-deletion/request"',
     );
     expect(res.text).toContain('does not reveal whether an account');
+    expect(res.text).toContain('href="/privacy"');
+    expect(res.text).toContain('href="/terms"');
     expect(supabaseMock.resolveUser).not.toHaveBeenCalled();
   });
 

@@ -62,6 +62,7 @@ export class ConversationsController {
     const conversationId = parseConversationId(id);
     const input = parseCreateMessageBody(body);
     const message = await this.admin.createMessage(
+      user.id,
       tutorProfileId,
       conversationId,
       input.text,

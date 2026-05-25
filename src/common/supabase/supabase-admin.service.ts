@@ -55,6 +55,13 @@ import type {
   ConversationRecord,
   MessageRecord,
 } from '../../conversations/dto/conversation-fields';
+import type { CreateReportInput } from '../../trust-safety/dto/create-report-request.dto';
+import {
+  conversationBlocked,
+  type ReportRecord,
+  type UserBlockRecord,
+} from '../../trust-safety/dto/trust-safety-fields';
+import type { UpdateReportInput } from '../../trust-safety/dto/update-report-request.dto';
 import { DomainException } from '../errors/domain.exception';
 import { ErrorCode } from '../errors/error-codes';
 
@@ -64,8 +71,7 @@ const VALID_ROLES: readonly Role[] = ['tutor', 'provider', 'admin'];
 /** Colunas seguras de `public.pets` — exclui `tutor_profile_id`/`deleted_at`. */
 const PET_COLUMNS =
   'id,name,species,breed,size,age_range,notes,created_at,updated_at' as const;
-const TUTOR_PROFILE_COLUMNS =
-  'id,display_name,created_at,updated_at' as const;
+const TUTOR_PROFILE_COLUMNS = 'id,display_name,created_at,updated_at' as const;
 const ADDRESS_COLUMNS =
   'id,label,country_code,city,postcode,public_area_label,location_precision,created_at,updated_at' as const;
 /** Colunas seguras de `public.bookings` — exclui `tutor_profile_id`. */
@@ -82,6 +88,16 @@ const ACTIVE_BOOKING_STATUSES: readonly BookingStatus[] = [
 const CONVERSATION_COLUMNS =
   'id,provider_id,last_message_text,last_message_at,last_message_from_provider' as const;
 const MESSAGE_COLUMNS = 'id,from_provider,body,created_at' as const;
+const REPORT_COLUMNS =
+  'id,status,category,target_type,target_id,created_at,updated_at' as const;
+const USER_BLOCK_COLUMNS =
+  'id,blocked_user_id,conversation_id,created_at' as const;
+
+interface ConversationParticipantContext {
+  id: string;
+  providerId: string;
+  providerUserId: string;
+}
 
 @Injectable()
 export class SupabaseAdminService implements OnModuleInit {
@@ -296,7 +312,10 @@ export class SupabaseAdminService implements OnModuleInit {
 
     if (error) {
       if (error.code === '23505') return null;
-      this.logger.error({ code: error.code }, 'Failed to create tutor profile.');
+      this.logger.error(
+        { code: error.code },
+        'Failed to create tutor profile.',
+      );
       throw new AuthBackendUnavailableException();
     }
 
@@ -318,7 +337,10 @@ export class SupabaseAdminService implements OnModuleInit {
       .maybeSingle();
 
     if (error) {
-      this.logger.error({ code: error.code }, 'Failed to update tutor profile.');
+      this.logger.error(
+        { code: error.code },
+        'Failed to update tutor profile.',
+      );
       throw new AuthBackendUnavailableException();
     }
 
@@ -532,10 +554,7 @@ export class SupabaseAdminService implements OnModuleInit {
   }
 
   /** Soft delete via `deleted_at`. `false` = pet inexistente ou de outro tutor. */
-  async softDeletePet(
-    tutorProfileId: string,
-    petId: string,
-  ): Promise<boolean> {
+  async softDeletePet(tutorProfileId: string, petId: string): Promise<boolean> {
     const client = this.getClient();
     const { data, error } = await client
       .from('pets')
@@ -871,16 +890,21 @@ export class SupabaseAdminService implements OnModuleInit {
    * `null` = conversa inexistente ou de outro tutor.
    */
   async createMessage(
+    tutorUserId: string,
     tutorProfileId: string,
     conversationId: string,
     text: string,
   ): Promise<MessageRecord | null> {
     const client = this.getClient();
-    const owned = await this.loadOwnedConversationId(
+    const context = await this.loadOwnedConversationContext(
       tutorProfileId,
       conversationId,
     );
-    if (!owned) return null;
+    if (!context) return null;
+
+    if (await this.isConversationBlocked(tutorUserId, context.providerUserId)) {
+      throw conversationBlocked();
+    }
 
     const inserted = await client
       .from('messages')
@@ -922,6 +946,128 @@ export class SupabaseAdminService implements OnModuleInit {
   }
 
   /** Retorna o id da conversa se ela pertence ao tutor; senão `null`. */
+  async createTrustSafetyReport(
+    user: AuthUser,
+    input: CreateReportInput,
+  ): Promise<ReportRecord | null> {
+    const tutorProfileId = user.profiles?.tutor?.id;
+    if (!tutorProfileId) return null;
+
+    const conversationId =
+      input.targetType === 'conversation'
+        ? input.targetId
+        : await this.loadMessageConversationId(input.targetId);
+    if (!conversationId) return null;
+
+    const context = await this.loadOwnedConversationContext(
+      tutorProfileId,
+      conversationId,
+    );
+    if (!context) return null;
+
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('reports')
+      .insert({
+        reporter_user_id: user.id,
+        reported_user_id: context.providerUserId,
+        target_type: input.targetType,
+        target_id: input.targetId,
+        conversation_id: context.id,
+        message_id: input.targetType === 'message' ? input.targetId : null,
+        category: input.category,
+        description: input.description,
+      })
+      .select(REPORT_COLUMNS)
+      .single();
+
+    if (error || !data) {
+      this.logger.error({ code: error?.code }, 'Failed to create report.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data;
+  }
+
+  async blockConversationParticipant(
+    user: AuthUser,
+    conversationId: string,
+  ): Promise<UserBlockRecord | null> {
+    const tutorProfileId = user.profiles?.tutor?.id;
+    if (!tutorProfileId) return null;
+
+    const context = await this.loadOwnedConversationContext(
+      tutorProfileId,
+      conversationId,
+    );
+    if (!context) return null;
+    if (context.providerUserId === user.id) return null;
+
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('user_blocks')
+      .upsert(
+        {
+          blocker_user_id: user.id,
+          blocked_user_id: context.providerUserId,
+          conversation_id: context.id,
+          reason: 'chat_safety',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'blocker_user_id,blocked_user_id' },
+      )
+      .select(USER_BLOCK_COLUMNS)
+      .single();
+
+    if (error || !data) {
+      this.logger.error({ code: error?.code }, 'Failed to block user.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data;
+  }
+
+  async listAdminReports(): Promise<ReportRecord[]> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('reports')
+      .select(REPORT_COLUMNS)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to list reports.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data ?? [];
+  }
+
+  async updateAdminReportStatus(
+    adminUserId: string,
+    reportId: string,
+    input: UpdateReportInput,
+  ): Promise<ReportRecord | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('reports')
+      .update({
+        status: input.status,
+        assigned_admin_id: adminUserId,
+        internal_note: input.internalNote,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', reportId)
+      .select(REPORT_COLUMNS)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to update report.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data ?? null;
+  }
+
   private async loadOwnedConversationId(
     tutorProfileId: string,
     conversationId: string,
@@ -940,6 +1086,101 @@ export class SupabaseAdminService implements OnModuleInit {
     }
 
     return data?.id ?? null;
+  }
+
+  private async loadOwnedConversationContext(
+    tutorProfileId: string,
+    conversationId: string,
+  ): Promise<ConversationParticipantContext | null> {
+    const client = this.getClient();
+    const { data: conversation, error: conversationError } = await client
+      .from('conversations')
+      .select('id,provider_id')
+      .eq('id', conversationId)
+      .eq('tutor_profile_id', tutorProfileId)
+      .maybeSingle();
+
+    if (conversationError) {
+      this.logger.error(
+        { code: conversationError.code },
+        'Failed to load conversation context.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    if (!conversation) return null;
+
+    const { data: provider, error: providerError } = await client
+      .from('providers')
+      .select('provider_profile_id')
+      .eq('id', conversation.provider_id)
+      .maybeSingle();
+
+    if (providerError || !provider) {
+      this.logger.error(
+        { code: providerError?.code },
+        'Failed to load conversation provider.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    const { data: profile, error: profileError } = await client
+      .from('provider_profiles')
+      .select('user_id')
+      .eq('id', provider.provider_profile_id)
+      .maybeSingle();
+
+    if (profileError || !profile) {
+      this.logger.error(
+        { code: profileError?.code },
+        'Failed to load conversation provider profile.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return {
+      id: conversation.id,
+      providerId: conversation.provider_id,
+      providerUserId: profile.user_id,
+    };
+  }
+
+  private async loadMessageConversationId(
+    messageId: string,
+  ): Promise<string | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('messages')
+      .select('conversation_id')
+      .eq('id', messageId)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to load message target.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data?.conversation_id ?? null;
+  }
+
+  private async isConversationBlocked(
+    tutorUserId: string,
+    providerUserId: string,
+  ): Promise<boolean> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('user_blocks')
+      .select('id')
+      .in('blocker_user_id', [tutorUserId, providerUserId])
+      .in('blocked_user_id', [tutorUserId, providerUserId])
+      .limit(1);
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to load user block.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return (data?.length ?? 0) > 0;
   }
 
   private async loadAuthUserById(userId: string): Promise<AuthUser> {

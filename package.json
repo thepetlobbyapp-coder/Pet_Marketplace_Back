@@ -21,6 +21,7 @@
     "auth:roles:set": "node scripts/auth/set-user-role.mjs",
     "db:smoke": "node scripts/db/smoke-readonly.mjs",
     "db:smoke:block2b": "node scripts/db/smoke-block2b-readonly.mjs",
+    "db:smoke:trust-safety": "node scripts/db/smoke-trust-safety-readonly.mjs",
     "db:smoke:me": "node scripts/db/smoke-me-authenticated.mjs",
     "db:run-sql": "node scripts/db/run-sql-file.mjs"
   },

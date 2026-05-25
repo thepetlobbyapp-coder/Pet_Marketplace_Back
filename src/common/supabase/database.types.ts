@@ -361,6 +361,73 @@ export interface Database {
         };
         Relationships: [];
       };
+      reports: {
+        Row: {
+          id: string;
+          reporter_user_id: string;
+          reported_user_id: string | null;
+          target_type: 'conversation' | 'message';
+          target_id: string;
+          conversation_id: string;
+          message_id: string | null;
+          category: Database['public']['Enums']['report_category'];
+          description: string | null;
+          status: Database['public']['Enums']['report_status'];
+          assigned_admin_id: string | null;
+          internal_note: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          reporter_user_id: string;
+          reported_user_id?: string | null;
+          target_type: 'conversation' | 'message';
+          target_id: string;
+          conversation_id: string;
+          message_id?: string | null;
+          category: Database['public']['Enums']['report_category'];
+          description?: string | null;
+          status?: Database['public']['Enums']['report_status'];
+          assigned_admin_id?: string | null;
+          internal_note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          status?: Database['public']['Enums']['report_status'];
+          assigned_admin_id?: string | null;
+          internal_note?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      user_blocks: {
+        Row: {
+          id: string;
+          blocker_user_id: string;
+          blocked_user_id: string;
+          conversation_id: string | null;
+          reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          blocker_user_id: string;
+          blocked_user_id: string;
+          conversation_id?: string | null;
+          reason?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          conversation_id?: string | null;
+          reason?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -389,6 +456,19 @@ export interface Database {
       provider_status: 'active' | 'paused' | 'blocked' | 'deleted';
       provider_category: 'walk' | 'sitting' | 'transport' | 'boarding';
       booking_status: 'requested' | 'confirmed' | 'cancelled' | 'completed';
+      report_status:
+        | 'open'
+        | 'in_review'
+        | 'action_taken'
+        | 'dismissed'
+        | 'closed';
+      report_category:
+        | 'safety_concern'
+        | 'inappropriate_behaviour'
+        | 'harassment'
+        | 'spam_scam'
+        | 'no_show'
+        | 'other';
       pet_species: 'dog' | 'cat' | 'other';
       pet_size: 'small' | 'medium' | 'large' | 'giant' | 'unknown';
       location_precision: 'exact' | 'postcode' | 'approximate';

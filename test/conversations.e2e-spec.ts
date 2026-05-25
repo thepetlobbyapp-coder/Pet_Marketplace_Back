@@ -5,6 +5,8 @@ import { AppModule } from '../src/app.module';
 import { SupabaseService } from '../src/common/auth/supabase.service';
 import type { AuthUser } from '../src/common/auth/auth-user';
 import { SupabaseAdminService } from '../src/common/supabase/supabase-admin.service';
+import { DomainException } from '../src/common/errors/domain.exception';
+import { ErrorCode } from '../src/common/errors/error-codes';
 import type {
   ConversationRecord,
   MessageRecord,
@@ -46,6 +48,7 @@ describe('Conversations (e2e)', () => {
   let resolvedUser: AuthUser | null;
   let messagesResult: MessageRecord[] | null;
   let createResult: MessageRecord | null;
+  let createError: DomainException | null;
 
   const supabaseMock = {
     get isConfigured(): boolean {
@@ -63,8 +66,15 @@ describe('Conversations (e2e)', () => {
         messagesResult,
     ),
     createMessage: jest.fn(
-      async (_tutorProfileId: string, _conversationId: string, text: string) =>
-        createResult ? { ...createResult, body: text } : null,
+      async (
+        _tutorUserId: string,
+        _tutorProfileId: string,
+        _conversationId: string,
+        text: string,
+      ) => {
+        if (createError) throw createError;
+        return createResult ? { ...createResult, body: text } : null;
+      },
     ),
   };
 
@@ -87,6 +97,7 @@ describe('Conversations (e2e)', () => {
     resolvedUser = ACTIVE_USER;
     messagesResult = [MESSAGE_ROW];
     createResult = MESSAGE_ROW;
+    createError = null;
     supabaseMock.resolveUser.mockClear();
     supabaseAdminMock.listConversations.mockClear();
     supabaseAdminMock.listMessages.mockClear();
@@ -205,6 +216,7 @@ describe('Conversations (e2e)', () => {
       time: MESSAGE_ROW.created_at,
     });
     expect(supabaseAdminMock.createMessage).toHaveBeenCalledWith(
+      ACTIVE_USER.id,
       TUTOR_PROFILE_ID,
       CONVERSATION_ID,
       'Yes please!',
@@ -224,23 +236,38 @@ describe('Conversations (e2e)', () => {
     expect(res.body.error.code).toBe('NOT_FOUND');
   });
 
+  it('POST /conversations/:id/messages returns 403 when the conversation is blocked', async () => {
+    createError = new DomainException(
+      ErrorCode.FORBIDDEN,
+      'This conversation is blocked.',
+      {},
+      403,
+    );
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/conversations/${CONVERSATION_ID}/messages`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ text: 'Hello' })
+      .expect(403);
+
+    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(JSON.stringify(res.body)).not.toContain('Hello');
+  });
+
   it.each([
     ['missing text', {}],
     ['empty text', { text: '   ' }],
     ['non-string text', { text: 42 }],
-  ])(
-    'POST /conversations/:id/messages rejects %s',
-    async (_caseName, body) => {
-      const res = await request(app.getHttpServer())
-        .post(`/api/v1/conversations/${CONVERSATION_ID}/messages`)
-        .set('Authorization', 'Bearer test-token')
-        .send(body)
-        .expect(400);
+  ])('POST /conversations/:id/messages rejects %s', async (_caseName, body) => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/conversations/${CONVERSATION_ID}/messages`)
+      .set('Authorization', 'Bearer test-token')
+      .send(body)
+      .expect(400);
 
-      expect(res.body.error.code).toBe('VALIDATION_ERROR');
-      expect(supabaseAdminMock.createMessage).not.toHaveBeenCalled();
-    },
-  );
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(supabaseAdminMock.createMessage).not.toHaveBeenCalled();
+  });
 
   it('POST /conversations/:id/messages never echoes the message text in errors', async () => {
     const secret = 'super-secret-message-body-1234567890';

@@ -47,7 +47,7 @@ export class TrustSafetyController {
     const report = await this.admin.createTrustSafetyReport(user, input);
     if (!report) throw trustSafetyNotFound();
 
-    this.audit.record({
+    await this.audit.record({
       actorUserId: user.id,
       action: 'trust_safety.report_created',
       entityType: 'report',
@@ -76,7 +76,7 @@ export class TrustSafetyController {
     );
     if (!block) throw trustSafetyNotFound();
 
-    this.audit.record({
+    await this.audit.record({
       actorUserId: user.id,
       action: 'trust_safety.user_blocked',
       entityType: 'user_block',
@@ -105,20 +105,12 @@ export class TrustSafetyController {
   ): Promise<ReportResponseDto> {
     const reportId = parseTrustSafetyUuid(id, 'report id');
     const input = parseUpdateReportBody(body);
-    const report = await this.admin.updateAdminReportStatus(
+    const report = await this.admin.updateAdminReportStatusWithAudit(
       user.id,
       reportId,
       input,
     );
     if (!report) throw trustSafetyNotFound();
-
-    this.audit.record({
-      actorUserId: user.id,
-      action: 'trust_safety.report_status_updated',
-      entityType: 'report',
-      entityId: report.id,
-      metadata: { status: report.status },
-    });
 
     return ReportResponseDto.fromRecord(report);
   }

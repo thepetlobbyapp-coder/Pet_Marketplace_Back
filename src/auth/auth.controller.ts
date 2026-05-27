@@ -15,8 +15,8 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  logout(@CurrentUser() user: AuthUser): void {
-    this.audit.record({
+  async logout(@CurrentUser() user: AuthUser): Promise<void> {
+    await this.audit.record({
       actorUserId: user.id,
       action: 'auth.logout',
       entityType: 'user',

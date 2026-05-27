@@ -78,7 +78,7 @@ export class AccountDeletionController {
       const result = await this.admin.requestPublicAccountDeletionByEmail(
         input.email,
       );
-      this.audit.record({
+      await this.audit.record({
         actorUserId: result.userId,
         action: 'account.public_deletion_requested',
         entityType: 'account_deletion_request',

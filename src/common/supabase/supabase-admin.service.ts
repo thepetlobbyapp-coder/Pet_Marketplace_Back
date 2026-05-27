@@ -99,6 +99,14 @@ interface ConversationParticipantContext {
   providerUserId: string;
 }
 
+interface AppendAuditLogInput {
+  action: string;
+  actorUserId: string | null;
+  metadata: Record<string, string | number | boolean | null>;
+  targetId: string | null;
+  targetType: string | null;
+}
+
 @Injectable()
 export class SupabaseAdminService implements OnModuleInit {
   private client: SupabaseClient<Database> | null = null;
@@ -1027,6 +1035,25 @@ export class SupabaseAdminService implements OnModuleInit {
     return data;
   }
 
+  async appendAuditLog(input: AppendAuditLogInput): Promise<void> {
+    const client = this.getClient();
+    const { error } = await client.from('audit_logs').insert({
+      action: input.action,
+      actor_user_id: input.actorUserId,
+      metadata: input.metadata,
+      target_id: input.targetId,
+      target_type: input.targetType,
+    });
+
+    if (error) {
+      this.logger.error(
+        { code: error.code, action: input.action, targetType: input.targetType },
+        'Failed to append audit log.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+  }
+
   async listAdminReports(): Promise<ReportRecord[]> {
     const client = this.getClient();
     const { data, error } = await client
@@ -1042,26 +1069,26 @@ export class SupabaseAdminService implements OnModuleInit {
     return data ?? [];
   }
 
-  async updateAdminReportStatus(
+  async updateAdminReportStatusWithAudit(
     adminUserId: string,
     reportId: string,
     input: UpdateReportInput,
   ): Promise<ReportRecord | null> {
     const client = this.getClient();
     const { data, error } = await client
-      .from('reports')
-      .update({
-        status: input.status,
-        assigned_admin_id: adminUserId,
-        internal_note: input.internalNote,
-        updated_at: new Date().toISOString(),
+      .rpc('admin_update_report_status_with_audit', {
+        p_admin_user_id: adminUserId,
+        p_report_id: reportId,
+        p_status: input.status,
+        p_internal_note: input.internalNote,
       })
-      .eq('id', reportId)
-      .select(REPORT_COLUMNS)
       .maybeSingle();
 
     if (error) {
-      this.logger.error({ code: error.code }, 'Failed to update report.');
+      this.logger.error(
+        { code: error.code },
+        'Failed to update report status with audit.',
+      );
       throw new AuthBackendUnavailableException();
     }
 

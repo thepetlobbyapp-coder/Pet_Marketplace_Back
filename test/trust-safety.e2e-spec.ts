@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { SupabaseService } from '../src/common/auth/supabase.service';
 import type { AuthUser } from '../src/common/auth/auth-user';
+import { AuthBackendUnavailableException } from '../src/common/errors/domain.exception';
 import { SupabaseAdminService } from '../src/common/supabase/supabase-admin.service';
 import type {
   ReportRecord,
@@ -64,6 +65,7 @@ describe('TrustSafety (e2e)', () => {
   };
 
   const supabaseAdminMock = {
+    appendAuditLog: jest.fn(async () => undefined),
     createTrustSafetyReport: jest.fn(
       async (
         _user: AuthUser,
@@ -81,7 +83,7 @@ describe('TrustSafety (e2e)', () => {
       async (_user: AuthUser, _conversationId: string) => blockResult,
     ),
     listAdminReports: jest.fn(async () => [REPORT_ROW]),
-    updateAdminReportStatus: jest.fn(
+    updateAdminReportStatusWithAudit: jest.fn(
       async (
         _adminUserId: string,
         _reportId: string,
@@ -117,7 +119,8 @@ describe('TrustSafety (e2e)', () => {
     supabaseAdminMock.createTrustSafetyReport.mockClear();
     supabaseAdminMock.blockConversationParticipant.mockClear();
     supabaseAdminMock.listAdminReports.mockClear();
-    supabaseAdminMock.updateAdminReportStatus.mockClear();
+    supabaseAdminMock.updateAdminReportStatusWithAudit.mockClear();
+    supabaseAdminMock.appendAuditLog.mockClear();
   });
 
   afterAll(async () => {
@@ -154,6 +157,17 @@ describe('TrustSafety (e2e)', () => {
         description: 'Please review this conversation.',
       },
     );
+    expect(supabaseAdminMock.appendAuditLog).toHaveBeenCalledWith({
+      action: 'trust_safety.report_created',
+      actorUserId: ACTIVE_USER.id,
+      metadata: {
+        category: 'safety_concern',
+        status: 'open',
+        targetType: 'conversation',
+      },
+      targetId: REPORT_ID,
+      targetType: 'report',
+    });
     expectSafeTrustSafetyPayload(res.body);
   });
 
@@ -243,6 +257,13 @@ describe('TrustSafety (e2e)', () => {
       ACTIVE_USER,
       CONVERSATION_ID,
     );
+    expect(supabaseAdminMock.appendAuditLog).toHaveBeenCalledWith({
+      action: 'trust_safety.user_blocked',
+      actorUserId: ACTIVE_USER.id,
+      metadata: { conversationId: CONVERSATION_ID },
+      targetId: BLOCK_ID,
+      targetType: 'user_block',
+    });
     expectSafeTrustSafetyPayload(res.body);
   });
 
@@ -275,7 +296,7 @@ describe('TrustSafety (e2e)', () => {
     expectSafeTrustSafetyPayload(res.body);
   });
 
-  it('PATCH /admin/reports/:id updates report status for admin users', async () => {
+  it('PATCH /admin/reports/:id updates report status through the transactional audit path', async () => {
     resolvedUser = ADMIN_USER;
 
     const res = await request(app.getHttpServer())
@@ -285,12 +306,34 @@ describe('TrustSafety (e2e)', () => {
       .expect(200);
 
     expect(res.body.status).toBe('in_review');
-    expect(supabaseAdminMock.updateAdminReportStatus).toHaveBeenCalledWith(
+    expect(supabaseAdminMock.updateAdminReportStatusWithAudit).toHaveBeenCalledWith(
       ADMIN_USER.id,
       REPORT_ID,
       { status: 'in_review', internalNote: 'Internal moderation note.' },
     );
+    expect(supabaseAdminMock.appendAuditLog).not.toHaveBeenCalled();
     expectSafeTrustSafetyPayload(res.body);
+  });
+
+  it('PATCH /admin/reports/:id fails explicitly when the transactional audit update fails', async () => {
+    resolvedUser = ADMIN_USER;
+    supabaseAdminMock.updateAdminReportStatusWithAudit.mockRejectedValueOnce(
+      new AuthBackendUnavailableException(),
+    );
+
+    const res = await request(app.getHttpServer())
+      .patch('/api/v1/admin/reports/' + REPORT_ID)
+      .set('Authorization', 'Bearer test-token')
+      .send({ status: 'in_review', internalNote: 'Internal moderation note.' })
+      .expect(503);
+
+    expect(res.body.error.code).toBe('AUTH_BACKEND_UNAVAILABLE');
+    expect(supabaseAdminMock.updateAdminReportStatusWithAudit).toHaveBeenCalledWith(
+      ADMIN_USER.id,
+      REPORT_ID,
+      { status: 'in_review', internalNote: 'Internal moderation note.' },
+    );
+    expect(supabaseAdminMock.appendAuditLog).not.toHaveBeenCalled();
   });
 });
 

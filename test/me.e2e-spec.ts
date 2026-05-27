@@ -61,6 +61,7 @@ describe('Me (e2e)', () => {
     resolveUser: jest.fn(async () => resolvedUser),
   };
   const supabaseAdminMock = {
+    appendAuditLog: jest.fn(async () => undefined),
     updateOwnUser: jest.fn(
       async (_userId: string, input: { locale: string }) => ({
         ...ACTIVE_USER,
@@ -118,6 +119,7 @@ describe('Me (e2e)', () => {
     supabaseAdminMock.updateOwnUser.mockClear();
     supabaseAdminMock.getOwnDeletionRequest.mockClear();
     supabaseAdminMock.requestOwnAccountDeletion.mockClear();
+    supabaseAdminMock.appendAuditLog.mockClear();
     supabaseAdminMock.createOwnTutorProfile.mockClear();
     supabaseAdminMock.updateOwnTutorProfile.mockClear();
   });
@@ -240,6 +242,13 @@ describe('Me (e2e)', () => {
     expect(supabaseAdminMock.requestOwnAccountDeletion).toHaveBeenCalledWith(
       ACTIVE_USER.id,
     );
+    expect(supabaseAdminMock.appendAuditLog).toHaveBeenCalledWith({
+      action: 'account.deletion_requested',
+      actorUserId: ACTIVE_USER.id,
+      metadata: { status: 'pending' },
+      targetId: 'df739f4c-cd08-42ac-8af6-cdf7875e3030',
+      targetType: 'account_deletion_request',
+    });
     expectForbiddenFieldsAbsent(res.body);
 
     const second = await request(app.getHttpServer())

@@ -25,6 +25,22 @@ export interface ProviderListingRow {
   bio: string | null;
 }
 
+export interface AdminUpdateReportStatusWithAuditRow {
+  id: string;
+  status: 'open' | 'in_review' | 'action_taken' | 'dismissed' | 'closed';
+  category:
+    | 'safety_concern'
+    | 'inappropriate_behaviour'
+    | 'harassment'
+    | 'spam_scam'
+    | 'no_show'
+    | 'other';
+  target_type: 'conversation' | 'message';
+  target_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -428,9 +444,46 @@ export interface Database {
         };
         Relationships: [];
       };
+      audit_logs: {
+        Row: {
+          id: string;
+          actor_user_id: string | null;
+          action: string;
+          target_type: string | null;
+          target_id: string | null;
+          metadata: unknown;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          actor_user_id?: string | null;
+          action: string;
+          target_type?: string | null;
+          target_id?: string | null;
+          metadata?: unknown;
+          created_at?: string;
+        };
+        Update: {
+          actor_user_id?: string | null;
+          action?: string;
+          target_type?: string | null;
+          target_id?: string | null;
+          metadata?: unknown;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
+      admin_update_report_status_with_audit: {
+        Args: {
+          p_admin_user_id: string;
+          p_report_id: string;
+          p_status: Database['public']['Enums']['report_status'];
+          p_internal_note: string | null;
+        };
+        Returns: AdminUpdateReportStatusWithAuditRow[];
+      };
       providers_list_near: {
         Args: {
           p_user_id: string;

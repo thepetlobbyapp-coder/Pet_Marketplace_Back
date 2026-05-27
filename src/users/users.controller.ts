@@ -88,7 +88,7 @@ export class UsersController {
     @CurrentUser() user: AuthUser,
   ): Promise<AccountDeletionRequestResponseDto> {
     const request = await this.admin.requestOwnAccountDeletion(user.id);
-    this.audit.record({
+    await this.audit.record({
       actorUserId: user.id,
       action: 'account.deletion_requested',
       entityType: 'account_deletion_request',

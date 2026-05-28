@@ -68,7 +68,18 @@ export class MeResponseDto {
   @ApiPropertyOptional({ type: LinkedProfilesDto })
   profiles?: LinkedProfilesDto;
 
-  static fromAuthUser(user: AuthUser): MeResponseDto {
+  @ApiPropertyOptional({
+    description:
+      'Short-lived signed URL for the user avatar. Null when no avatar is set.',
+    format: 'uri',
+    nullable: true,
+  })
+  avatarUrl?: string | null;
+
+  static fromAuthUser(
+    user: AuthUser,
+    options: { avatarUrl?: string | null } = {},
+  ): MeResponseDto {
     return {
       id: user.id,
       ...(user.email ? { email: user.email } : {}),
@@ -77,6 +88,9 @@ export class MeResponseDto {
       ...(user.locale ? { locale: user.locale } : {}),
       ...(user.createdAt ? { createdAt: user.createdAt } : {}),
       ...(user.updatedAt ? { updatedAt: user.updatedAt } : {}),
+      ...(options.avatarUrl !== undefined
+        ? { avatarUrl: options.avatarUrl }
+        : {}),
       ...(user.profiles && hasProfiles(user.profiles)
         ? {
             profiles: {

@@ -14,6 +14,7 @@ import type {
   ProviderProfileRecord,
 } from '../src/users/dto/provider-profile.dto';
 import type { AccountDeletionRequestRecord } from '../src/users/dto/account-deletion-request-response.dto';
+import { AvatarService } from '../src/users/avatar.service';
 
 const ACTIVE_USER: AuthUser = {
   id: '56e4ff57-5355-47bb-904b-27ebde394bf7',
@@ -143,6 +144,13 @@ describe('Me (e2e)', () => {
       },
     ),
   };
+  const avatarMock = {
+    resolveSignedUrl: jest.fn(async () => null),
+    uploadAvatar: jest.fn(async () => ({
+      avatarUrl: 'https://signed.example/avatar.jpg',
+    })),
+    deleteAvatar: jest.fn(async () => undefined),
+  };
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -152,6 +160,8 @@ describe('Me (e2e)', () => {
       .useValue(supabaseMock)
       .overrideProvider(SupabaseAdminService)
       .useValue(supabaseAdminMock)
+      .overrideProvider(AvatarService)
+      .useValue(avatarMock)
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -171,6 +181,9 @@ describe('Me (e2e)', () => {
     supabaseAdminMock.updateOwnTutorProfile.mockClear();
     supabaseAdminMock.createOwnProviderProfile.mockClear();
     supabaseAdminMock.updateOwnProviderProfile.mockClear();
+    avatarMock.resolveSignedUrl.mockClear();
+    avatarMock.uploadAvatar.mockClear();
+    avatarMock.deleteAvatar.mockClear();
   });
 
   afterAll(async () => {
@@ -191,9 +204,11 @@ describe('Me (e2e)', () => {
       locale: 'en-GB',
       createdAt: ACTIVE_USER.createdAt,
       updatedAt: ACTIVE_USER.updatedAt,
+      avatarUrl: null,
       profiles: ACTIVE_USER.profiles,
     });
     expect(supabaseMock.resolveUser).toHaveBeenCalledWith('test-token');
+    expect(avatarMock.resolveSignedUrl).toHaveBeenCalledWith(ACTIVE_USER.id);
     expectForbiddenFieldsAbsent(res.body);
   });
 
@@ -241,6 +256,7 @@ describe('Me (e2e)', () => {
       locale: 'en-US',
       createdAt: ACTIVE_USER.createdAt,
       updatedAt: '2026-05-18T21:00:00.000Z',
+      avatarUrl: null,
       profiles: ACTIVE_USER.profiles,
     });
     expect(supabaseAdminMock.updateOwnUser).toHaveBeenCalledWith(
@@ -248,6 +264,38 @@ describe('Me (e2e)', () => {
       { locale: 'en-US' },
     );
     expectForbiddenFieldsAbsent(res.body);
+  });
+
+  it('POST /api/v1/me/avatar uploads one multipart image field', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/me/avatar')
+      .set('Authorization', 'Bearer test-token')
+      .attach('image', Buffer.from('fake-image'), {
+        filename: 'avatar.jpg',
+        contentType: 'image/jpeg',
+      })
+      .expect(200);
+
+    expect(res.body).toEqual({
+      avatarUrl: 'https://signed.example/avatar.jpg',
+    });
+    expect(avatarMock.uploadAvatar).toHaveBeenCalledWith(
+      ACTIVE_USER.id,
+      expect.objectContaining({
+        fieldname: 'image',
+        originalname: 'avatar.jpg',
+        mimetype: 'image/jpeg',
+      }),
+    );
+  });
+
+  it('DELETE /api/v1/me/avatar deletes the authenticated user avatar', async () => {
+    await request(app.getHttpServer())
+      .delete('/api/v1/me/avatar')
+      .set('Authorization', 'Bearer test-token')
+      .expect(204);
+
+    expect(avatarMock.deleteAvatar).toHaveBeenCalledWith(ACTIVE_USER.id);
   });
 
   it('PATCH /api/v1/me rejects attempts to change backend-owned fields', async () => {

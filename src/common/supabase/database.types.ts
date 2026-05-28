@@ -71,6 +71,7 @@ export interface Database {
           phone: string | null;
           status: Database['public']['Enums']['user_status'];
           locale: string;
+          avatar_url: string | null;
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
@@ -81,6 +82,7 @@ export interface Database {
           phone?: string | null;
           status?: Database['public']['Enums']['user_status'];
           locale?: string;
+          avatar_url?: string | null;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
@@ -90,6 +92,7 @@ export interface Database {
           phone?: string | null;
           status?: Database['public']['Enums']['user_status'];
           locale?: string;
+          avatar_url?: string | null;
           updated_at?: string;
           deleted_at?: string | null;
         };

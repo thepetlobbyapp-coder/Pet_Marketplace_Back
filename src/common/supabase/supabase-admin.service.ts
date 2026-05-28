@@ -1458,6 +1458,65 @@ export class SupabaseAdminService implements OnModuleInit {
     };
   }
 
+  get storageClient(): SupabaseClient<Database> {
+    return this.getClient();
+  }
+
+  async getAvatarPath(userId: string): Promise<string | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('users')
+      .select('avatar_url')
+      .eq('id', userId)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (error) {
+      if (
+        error.code === 'PGRST204' ||
+        error.code === '42703' ||
+        error.message.toLowerCase().includes('avatar_url')
+      ) {
+        this.logger.warn(
+          { code: error.code },
+          'Avatar column is not available in the current database schema.',
+        );
+        return null;
+      }
+
+      this.logger.error(
+        { code: error.code },
+        'Failed to read user avatar path.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data?.avatar_url ?? null;
+  }
+
+  async setAvatarPath(
+    userId: string,
+    avatarPath: string | null,
+  ): Promise<void> {
+    const client = this.getClient();
+    const { error } = await client
+      .from('users')
+      .update({
+        avatar_url: avatarPath,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId)
+      .is('deleted_at', null);
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to persist user avatar path.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+  }
+
   private getClient(): SupabaseClient<Database> {
     if (!this.client) {
       throw new AuthBackendUnavailableException();

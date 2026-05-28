@@ -16,6 +16,10 @@ import type {
   TutorProfileInput,
   TutorProfileRecord,
 } from '../../users/dto/tutor-profile.dto';
+import type {
+  ProviderProfileInput,
+  ProviderProfileRecord,
+} from '../../users/dto/provider-profile.dto';
 import type { AccountDeletionRequestRecord } from '../../users/dto/account-deletion-request-response.dto';
 import type {
   AuthUser,
@@ -55,6 +59,11 @@ import type {
   ConversationRecord,
   MessageRecord,
 } from '../../conversations/dto/conversation-fields';
+import {
+  CONVERSATION_COLD_START_HOURLY_LIMIT as COLD_START_LIMIT,
+  CONVERSATION_COLD_START_WINDOW_MS as COLD_START_WINDOW_MS,
+  conversationColdStartRateLimited,
+} from '../../conversations/dto/conversation-fields';
 import type { CreateReportInput } from '../../trust-safety/dto/create-report-request.dto';
 import {
   conversationBlocked,
@@ -72,6 +81,8 @@ const VALID_ROLES: readonly Role[] = ['tutor', 'provider', 'admin'];
 const PET_COLUMNS =
   'id,name,species,breed,size,age_range,notes,created_at,updated_at' as const;
 const TUTOR_PROFILE_COLUMNS = 'id,display_name,created_at,updated_at' as const;
+const PROVIDER_PROFILE_COLUMNS =
+  'id,display_name,status,service_radius_km,rating_average,rating_count,created_at,updated_at' as const;
 const ADDRESS_COLUMNS =
   'id,label,country_code,city,postcode,public_area_label,location_precision,created_at,updated_at' as const;
 /** Colunas seguras de `public.bookings` — exclui `tutor_profile_id`. */
@@ -348,6 +359,54 @@ export class SupabaseAdminService implements OnModuleInit {
       this.logger.error(
         { code: error.code },
         'Failed to update tutor profile.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data ?? null;
+  }
+
+  async createOwnProviderProfile(
+    userId: string,
+    input: ProviderProfileInput,
+  ): Promise<ProviderProfileRecord | null> {
+    const client = this.getClient();
+    const { data, error } = await client.rpc('ensure_provider_profile', {
+      p_user_id: userId,
+      p_display_name: input.displayName,
+    });
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to create provider profile.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    const row = data?.[0];
+    if (!row) return null;
+    return row;
+  }
+
+  async updateOwnProviderProfile(
+    userId: string,
+    input: ProviderProfileInput,
+  ): Promise<ProviderProfileRecord | null> {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('provider_profiles')
+      .update({
+        display_name: input.displayName,
+      })
+      .eq('user_id', userId)
+      .select(PROVIDER_PROFILE_COLUMNS)
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to update provider profile.',
       );
       throw new AuthBackendUnavailableException();
     }
@@ -862,6 +921,167 @@ export class SupabaseAdminService implements OnModuleInit {
     }
 
     return data ?? [];
+  }
+
+  /**
+   * Abre (ou retoma) a conversa direta entre o tutor e um provider.
+   *
+   * Contrato:
+   * - `null` quando o provider nÃ£o existe (ou estÃ¡ soft-deleted) - controller
+   *   traduz para 404 genÃ©rico, sem revelar a causa exata.
+   * - LanÃ§a `conversationBlocked()` se hÃ¡ bloqueio em qualquer direÃ§Ã£o.
+   * - LanÃ§a `conversationColdStartRateLimited()` se o tutor jÃ¡ abriu
+   *   `CONVERSATION_COLD_START_HOURLY_LIMIT` conversas cold-start na janela.
+   * - Idempotente: se a conversa jÃ¡ existe (vinda de cold-start anterior OU
+   *   anexada a um booking) devolve a mesma linha sem clobber.
+   */
+  async openConversation(
+    tutorUserId: string,
+    tutorProfileId: string,
+    providerId: string,
+  ): Promise<ConversationRecord | null> {
+    const providerUserId = await this.loadActiveProviderUserId(providerId);
+    if (!providerUserId) return null;
+
+    if (providerUserId === tutorUserId) {
+      return null;
+    }
+
+    if (await this.isConversationBlocked(tutorUserId, providerUserId)) {
+      throw conversationBlocked();
+    }
+
+    return this.openColdStartConversation(tutorProfileId, providerId);
+  }
+
+  /**
+   * Resolve `user_id` do provider ativo (role provider, nÃ£o soft-deleted,
+   * perfil `active`). `null` quando o listing nÃ£o Ã© um provider pÃºblico vÃ¡lido.
+   */
+  private async loadActiveProviderUserId(
+    providerId: string,
+  ): Promise<string | null> {
+    const client = this.getClient();
+    const provider = await client
+      .from('providers')
+      .select('provider_profile_id,deleted_at')
+      .eq('id', providerId)
+      .maybeSingle();
+
+    if (provider.error) {
+      this.logger.error(
+        { code: provider.error.code },
+        'Failed to load provider for conversation open.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+    if (!provider.data || provider.data.deleted_at) return null;
+
+    const profile = await client
+      .from('provider_profiles')
+      .select('user_id,status')
+      .eq('id', provider.data.provider_profile_id)
+      .maybeSingle();
+
+    if (profile.error) {
+      this.logger.error(
+        { code: profile.error.code },
+        'Failed to load provider profile for conversation open.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+    if (!profile.data || profile.data.status !== 'active') return null;
+
+    const role = await client
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', profile.data.user_id)
+      .eq('role', 'provider')
+      .maybeSingle();
+
+    if (role.error) {
+      this.logger.error(
+        { code: role.error.code },
+        'Failed to load provider role for conversation open.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+    if (!role.data) return null;
+
+    const owner = await client
+      .from('users')
+      .select('id')
+      .eq('id', profile.data.user_id)
+      .eq('status', 'active')
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (owner.error) {
+      this.logger.error(
+        { code: owner.error.code },
+        'Failed to load provider owner for conversation open.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+    if (!owner.data) return null;
+
+    return profile.data.user_id;
+  }
+
+  /**
+   * Abertura cold-start atomica no banco. A RPC serializa por tutor com
+   * advisory lock transacional, re-seleciona conversa existente antes do count
+   * e aplica count+insert como uma secao critica.
+   */
+  private async openColdStartConversation(
+    tutorProfileId: string,
+    providerId: string,
+  ): Promise<ConversationRecord> {
+    const client = this.getClient();
+    const windowStart = new Date(
+      Date.now() - COLD_START_WINDOW_MS,
+    ).toISOString();
+
+    const { data, error } = await client.rpc('conversations_open_cold_start', {
+      p_tutor_profile_id: tutorProfileId,
+      p_provider_id: providerId,
+      p_limit: COLD_START_LIMIT,
+      p_window_start: windowStart,
+    });
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to open cold-start conversation atomically.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    const row = data?.[0];
+    if (!row) {
+      this.logger.error('Cold-start conversation RPC returned no rows.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    if (row.status === 'rate_limited') {
+      throw conversationColdStartRateLimited();
+    }
+
+    if (row.status !== 'ok' || !row.id || !row.provider_id) {
+      this.logger.error(
+        { status: row.status },
+        'Cold-start conversation RPC returned an invalid row.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return {
+      id: row.id,
+      provider_id: row.provider_id,
+      last_message_text: row.last_message_text,
+      last_message_at: row.last_message_at,
+      last_message_from_provider: row.last_message_from_provider ?? false,
+    };
   }
 
   /**

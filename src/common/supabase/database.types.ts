@@ -41,6 +41,26 @@ export interface AdminUpdateReportStatusWithAuditRow {
   updated_at: string;
 }
 
+export interface ConversationOpenColdStartRow {
+  status: 'ok' | 'rate_limited';
+  id: string | null;
+  provider_id: string | null;
+  last_message_text: string | null;
+  last_message_at: string | null;
+  last_message_from_provider: boolean | null;
+}
+
+export interface EnsureProviderProfileRow {
+  id: string;
+  display_name: string;
+  status: Database['public']['Enums']['provider_status'];
+  service_radius_km: number;
+  rating_average: number | null;
+  rating_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -475,6 +495,22 @@ export interface Database {
     };
     Views: Record<string, never>;
     Functions: {
+      conversations_open_cold_start: {
+        Args: {
+          p_tutor_profile_id: string;
+          p_provider_id: string;
+          p_limit: number;
+          p_window_start: string;
+        };
+        Returns: ConversationOpenColdStartRow[];
+      };
+      ensure_provider_profile: {
+        Args: {
+          p_user_id: string;
+          p_display_name: string;
+        };
+        Returns: EnsureProviderProfileRow[];
+      };
       admin_update_report_status_with_audit: {
         Args: {
           p_admin_user_id: string;

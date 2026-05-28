@@ -13,6 +13,14 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MESSAGE_MAX_LENGTH = 2000;
 
+/**
+ * Janela e teto do rate-limit de DM cold-start.
+ * Cold-start = conversa criada via `POST /conversations` antes de qualquer
+ * booking (`booking_id IS NULL`). O limite vale por `tutor_profile_id`.
+ */
+export const CONVERSATION_COLD_START_WINDOW_MS = 60 * 60 * 1000;
+export const CONVERSATION_COLD_START_HOURLY_LIMIT = 5;
+
 /** Linha segura de `public.conversations` — sem `tutor_profile_id`. */
 export interface ConversationRecord {
   id: string;
@@ -55,11 +63,34 @@ export function conversationNotFound(): DomainException {
   );
 }
 
+/**
+ * 429 do rate-limit de DM cold-start. Mensagem genÃ©rica de propÃ³sito â€” o
+ * teto e a janela sÃ£o pÃºblicos e estÃ¡veis, mas o uso atual do tutor nÃ£o vaza.
+ */
+export function conversationColdStartRateLimited(): DomainException {
+  return new DomainException(
+    ErrorCode.RATE_LIMITED,
+    'Too many new conversations started recently. Please try again later.',
+    {
+      limit: CONVERSATION_COLD_START_HOURLY_LIMIT,
+      windowMs: CONVERSATION_COLD_START_WINDOW_MS,
+    },
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
+}
+
 export function parseConversationId(value: unknown): string {
   if (typeof value !== 'string' || !UUID_PATTERN.test(value)) {
     throw conversationValidationError(
       'Conversation id must be a valid UUID.',
     );
+  }
+  return value;
+}
+
+export function parseProviderId(value: unknown): string {
+  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) {
+    throw conversationValidationError('providerId must be a valid UUID.');
   }
   return value;
 }

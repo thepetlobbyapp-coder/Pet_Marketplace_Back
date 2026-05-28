@@ -23,6 +23,12 @@ import {
   TutorProfileResponseDto,
 } from './dto/tutor-profile.dto';
 import {
+  parseCreateProviderProfileBody,
+  parseUpdateProviderProfileBody,
+  ProviderProfileRequestDto,
+  ProviderProfileResponseDto,
+} from './dto/provider-profile.dto';
+import {
   parseUpdateMeBody,
   UpdateMeRequestDto,
 } from './dto/update-me-request.dto';
@@ -133,6 +139,43 @@ export class UsersController {
 
     return TutorProfileResponseDto.fromRecord(profile);
   }
+
+  @Post('provider-profile')
+  @ApiOkResponse({
+    description:
+      'Backend-owned provider role/profile creation. New profiles start paused and are not marketplace listings.',
+    type: ProviderProfileResponseDto,
+  })
+  async createProviderProfile(
+    @CurrentUser() user: AuthUser,
+    @Body() body: ProviderProfileRequestDto,
+  ): Promise<ProviderProfileResponseDto> {
+    const input = parseCreateProviderProfileBody(body);
+    const profile = await this.admin.createOwnProviderProfile(user.id, input);
+    if (!profile) throw providerProfileNotFound();
+
+    return ProviderProfileResponseDto.fromRecord(profile);
+  }
+
+  @Patch('provider-profile')
+  @ApiOkResponse({
+    description: 'Updated provider profile for the authenticated user.',
+    type: ProviderProfileResponseDto,
+  })
+  async updateProviderProfile(
+    @CurrentUser() user: AuthUser,
+    @Body() body: ProviderProfileRequestDto,
+  ): Promise<ProviderProfileResponseDto> {
+    if (!user.roles.includes('provider') || !user.profiles?.provider) {
+      throw providerProfileNotFound();
+    }
+
+    const input = parseUpdateProviderProfileBody(body);
+    const profile = await this.admin.updateOwnProviderProfile(user.id, input);
+    if (!profile) throw providerProfileNotFound();
+
+    return ProviderProfileResponseDto.fromRecord(profile);
+  }
 }
 
 function tutorProfileAlreadyExists(): DomainException {
@@ -148,6 +191,15 @@ function tutorProfileNotFound(): DomainException {
   return new DomainException(
     ErrorCode.NOT_FOUND,
     'Authenticated user has no tutor profile.',
+    {},
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+function providerProfileNotFound(): DomainException {
+  return new DomainException(
+    ErrorCode.NOT_FOUND,
+    'Authenticated user has no provider profile.',
     {},
     HttpStatus.NOT_FOUND,
   );

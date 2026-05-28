@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+} from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/auth/current-user.decorator';
 import type { AuthUser } from '../common/auth/auth-user';
@@ -6,6 +14,7 @@ import { SupabaseAdminService } from '../common/supabase/supabase-admin.service'
 import { ConversationResponseDto } from './dto/conversation-response.dto';
 import { MessageResponseDto } from './dto/message-response.dto';
 import { parseCreateMessageBody } from './dto/create-message-request.dto';
+import { parseCreateConversationBody } from './dto/create-conversation-request.dto';
 import {
   conversationNotFound,
   parseConversationId,
@@ -33,6 +42,31 @@ export class ConversationsController {
     return conversations.map((conversation) =>
       ConversationResponseDto.fromRecord(conversation),
     );
+  }
+
+  /**
+   * Abre (ou retoma) a conversa direta entre o tutor autenticado e um
+   * provider. Idempotente: chamadas repetidas com o mesmo `providerId`
+   * devolvem a mesma linha, sem clobber de `booking_id` ou de mensagens
+   * existentes. Sem token -> 401; provider inexistente -> 404 genÃ©rico;
+   * qualquer block (em qualquer direÃ§Ã£o) -> 403; teto de cold-start -> 429.
+   */
+  @Post()
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: ConversationResponseDto })
+  async openWithProvider(
+    @CurrentUser() user: AuthUser,
+    @Body() body: unknown,
+  ): Promise<ConversationResponseDto> {
+    const tutorProfileId = requireTutorProfileId(user);
+    const input = parseCreateConversationBody(body);
+    const conversation = await this.admin.openConversation(
+      user.id,
+      tutorProfileId,
+      input.providerId,
+    );
+    if (conversation === null) throw conversationNotFound();
+    return ConversationResponseDto.fromRecord(conversation);
   }
 
   @Get(':id/messages')

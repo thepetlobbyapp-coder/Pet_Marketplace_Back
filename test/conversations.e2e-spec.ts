@@ -1,4 +1,4 @@
-import { INestApplication } from '@nestjs/common';
+import { HttpStatus, INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -14,7 +14,9 @@ import type {
 
 const TUTOR_PROFILE_ID = '1b6fe9f3-514f-475c-9286-38c19e576116';
 const PROVIDER_ID = '99999999-8888-4777-8666-555555555555';
+const OTHER_PROVIDER_ID = '88888888-7777-4666-8555-444444444444';
 const CONVERSATION_ID = '44444444-5555-4666-8777-888888888888';
+const NEW_CONVERSATION_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 const MESSAGE_ID = '55555555-6666-4777-8888-999999999999';
 
 const ACTIVE_USER: AuthUser = {
@@ -49,6 +51,8 @@ describe('Conversations (e2e)', () => {
   let messagesResult: MessageRecord[] | null;
   let createResult: MessageRecord | null;
   let createError: DomainException | null;
+  let openConversationResult: ConversationRecord | null;
+  let openConversationError: DomainException | null;
 
   const supabaseMock = {
     get isConfigured(): boolean {
@@ -76,6 +80,16 @@ describe('Conversations (e2e)', () => {
         return createResult ? { ...createResult, body: text } : null;
       },
     ),
+    openConversation: jest.fn(
+      async (
+        _tutorUserId: string,
+        _tutorProfileId: string,
+        _providerId: string,
+      ) => {
+        if (openConversationError) throw openConversationError;
+        return openConversationResult;
+      },
+    ),
   };
 
   beforeAll(async () => {
@@ -98,10 +112,19 @@ describe('Conversations (e2e)', () => {
     messagesResult = [MESSAGE_ROW];
     createResult = MESSAGE_ROW;
     createError = null;
+    openConversationResult = {
+      id: NEW_CONVERSATION_ID,
+      provider_id: OTHER_PROVIDER_ID,
+      last_message_text: null,
+      last_message_at: null,
+      last_message_from_provider: false,
+    };
+    openConversationError = null;
     supabaseMock.resolveUser.mockClear();
     supabaseAdminMock.listConversations.mockClear();
     supabaseAdminMock.listMessages.mockClear();
     supabaseAdminMock.createMessage.mockClear();
+    supabaseAdminMock.openConversation.mockClear();
   });
 
   afterAll(async () => {
@@ -306,6 +329,156 @@ describe('Conversations (e2e)', () => {
 
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
     expect(supabaseAdminMock.createMessage).not.toHaveBeenCalled();
+  });
+
+  // --- POST /conversations (cold-start) ---
+
+  it('POST /conversations requires bearer auth', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .send({ providerId: OTHER_PROVIDER_ID })
+      .expect(401);
+
+    expect(res.body.error.code).toBe('UNAUTHENTICATED');
+    expect(supabaseMock.resolveUser).not.toHaveBeenCalled();
+    expect(supabaseAdminMock.openConversation).not.toHaveBeenCalled();
+  });
+
+  it('POST /conversations opens (or resumes) a tutor-provider conversation', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .send({ providerId: OTHER_PROVIDER_ID })
+      .expect(200);
+
+    expect(res.body).toEqual({
+      id: NEW_CONVERSATION_ID,
+      providerId: OTHER_PROVIDER_ID,
+      lastMessage: null,
+      lastTime: null,
+      unread: false,
+    });
+    expect(supabaseAdminMock.openConversation).toHaveBeenCalledWith(
+      ACTIVE_USER.id,
+      TUTOR_PROFILE_ID,
+      OTHER_PROVIDER_ID,
+    );
+    expectSafeConversationPayload(res.body);
+  });
+
+  it('POST /conversations returns 404 when the provider is unavailable', async () => {
+    openConversationResult = null;
+
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .send({ providerId: OTHER_PROVIDER_ID })
+      .expect(404);
+
+    expect(res.body.error.code).toBe('NOT_FOUND');
+    expect(res.body.error.details).toEqual({});
+  });
+
+  it('POST /conversations returns 404 without a tutor profile', async () => {
+    resolvedUser = { ...ACTIVE_USER, profiles: {} };
+
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .send({ providerId: OTHER_PROVIDER_ID })
+      .expect(404);
+
+    expect(res.body.error.code).toBe('NOT_FOUND');
+    expect(supabaseAdminMock.openConversation).not.toHaveBeenCalled();
+  });
+
+  it('POST /conversations returns 403 when either side has blocked the other', async () => {
+    openConversationError = new DomainException(
+      ErrorCode.FORBIDDEN,
+      'This conversation is blocked.',
+      {},
+      HttpStatus.FORBIDDEN,
+    );
+
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .send({ providerId: OTHER_PROVIDER_ID })
+      .expect(403);
+
+    expect(res.body.error.code).toBe('FORBIDDEN');
+  });
+
+  it('POST /conversations returns 429 when the cold-start rate limit is reached', async () => {
+    openConversationError = new DomainException(
+      ErrorCode.RATE_LIMITED,
+      'Too many new conversations started recently. Please try again later.',
+      { limit: 5, windowMs: 60 * 60 * 1000 },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .send({ providerId: OTHER_PROVIDER_ID })
+      .expect(429);
+
+    expect(res.body.error.code).toBe('RATE_LIMITED');
+    expect(res.body.error.details).toEqual({
+      limit: 5,
+      windowMs: 60 * 60 * 1000,
+    });
+  });
+
+  it.each([
+    ['missing providerId', {}],
+    ['non-UUID providerId', { providerId: 'not-a-uuid' }],
+    ['null providerId', { providerId: null }],
+    ['numeric providerId', { providerId: 42 }],
+  ])('POST /conversations rejects %s', async (_caseName, body) => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .send(body)
+      .expect(400);
+
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(supabaseAdminMock.openConversation).not.toHaveBeenCalled();
+  });
+
+  it('POST /conversations blocks fields outside the allowlist', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .send({
+        providerId: OTHER_PROVIDER_ID,
+        tutorProfileId: 'attacker',
+        bookingId: 'attacker-2',
+      })
+      .expect(400);
+
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(res.body.error.details.rejectedFields).toEqual(
+      expect.arrayContaining(['tutorProfileId', 'bookingId']),
+    );
+    expect(supabaseAdminMock.openConversation).not.toHaveBeenCalled();
+  });
+
+  it('POST /conversations is idempotent: repeated calls return the same conversation', async () => {
+    const firstRes = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .send({ providerId: OTHER_PROVIDER_ID })
+      .expect(200);
+
+    const secondRes = await request(app.getHttpServer())
+      .post('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .send({ providerId: OTHER_PROVIDER_ID })
+      .expect(200);
+
+    expect(secondRes.body).toEqual(firstRes.body);
+    expect(supabaseAdminMock.openConversation).toHaveBeenCalledTimes(2);
   });
 });
 

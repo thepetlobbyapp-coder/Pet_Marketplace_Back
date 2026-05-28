@@ -19,6 +19,7 @@ import { ConversationsModule } from './conversations/conversations.module';
 import { AccountDeletionModule } from './account-deletion/account-deletion.module';
 import { LegalModule } from './legal/legal.module';
 import { TrustSafetyModule } from './trust-safety/trust-safety.module';
+import { AdminModule } from './admin/admin.module';
 
 /**
  * Composição raiz — Bloco 1.
@@ -42,6 +43,7 @@ import { TrustSafetyModule } from './trust-safety/trust-safety.module';
     BookingsModule,
     ConversationsModule,
     TrustSafetyModule,
+    AdminModule,
     AccountDeletionModule,
     LegalModule,
   ],

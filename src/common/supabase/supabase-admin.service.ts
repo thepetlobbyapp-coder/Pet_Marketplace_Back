@@ -26,6 +26,7 @@ import type {
   ProviderProfileSummary,
   Role,
   TutorProfileSummary,
+  UserStatus,
 } from '../auth/auth-user';
 import { AuthBackendUnavailableException } from '../errors/domain.exception';
 import type { Database } from './database.types';
@@ -53,6 +54,7 @@ import type {
 import {
   assertBookingTransition,
   bookingSlotTaken,
+  BOOKING_STATUSES,
 } from '../../bookings/dto/booking-fields';
 import type { CreateBookingInput } from '../../bookings/dto/create-booking-request.dto';
 import type {
@@ -71,8 +73,25 @@ import {
   type UserBlockRecord,
 } from '../../trust-safety/dto/trust-safety-fields';
 import type { UpdateReportInput } from '../../trust-safety/dto/update-report-request.dto';
+import type {
+  AdminAuditLogRecord,
+  AdminBookingRecord,
+  AdminDashboardRecord,
+  AdminProviderRecord,
+  AdminUserRecord,
+} from '../../admin/dto/admin-records';
+import type { UpdateAdminUserStatusInput } from '../../admin/dto/update-admin-user-status-request.dto';
 import { DomainException } from '../errors/domain.exception';
 import { ErrorCode } from '../errors/error-codes';
+import {
+  buildPaginatedResult,
+  decodePaginationCursor,
+  encodePaginationCursor,
+  readCursorIsoDateTime,
+  readCursorUuid,
+  type CursorPaginationQuery,
+  type PaginatedResult,
+} from '../pagination/cursor-pagination';
 
 const DEFAULT_ROLE: Role = 'tutor';
 const VALID_ROLES: readonly Role[] = ['tutor', 'provider', 'admin'];
@@ -103,6 +122,20 @@ const REPORT_COLUMNS =
   'id,status,category,target_type,target_id,created_at,updated_at' as const;
 const USER_BLOCK_COLUMNS =
   'id,blocked_user_id,conversation_id,created_at' as const;
+const ADMIN_USER_COLUMNS =
+  'id,email,status,created_at,updated_at,deleted_at' as const;
+const ADMIN_PROVIDER_COLUMNS =
+  'id,display_name,status,created_at,updated_at' as const;
+const ADMIN_BOOKING_COLUMNS =
+  'id,service_label,booking_date,time_slot_id,status,created_at,updated_at' as const;
+const ADMIN_AUDIT_LOG_COLUMNS =
+  'id,actor_user_id,action,target_type,target_id,created_at' as const;
+const ADMIN_OPEN_REPORT_STATUSES = ['open', 'in_review'] as const;
+
+interface SupabaseCountResult {
+  count: number | null;
+  error: { code?: string } | null;
+}
 
 interface ConversationParticipantContext {
   id: string;
@@ -1267,7 +1300,11 @@ export class SupabaseAdminService implements OnModuleInit {
 
     if (error) {
       this.logger.error(
-        { code: error.code, action: input.action, targetType: input.targetType },
+        {
+          code: error.code,
+          action: input.action,
+          targetType: input.targetType,
+        },
         'Failed to append audit log.',
       );
       throw new AuthBackendUnavailableException();
@@ -1313,6 +1350,335 @@ export class SupabaseAdminService implements OnModuleInit {
     }
 
     return data ?? null;
+  }
+
+  async getAdminDashboardSummary(): Promise<AdminDashboardRecord> {
+    const client = this.getClient();
+    const bookingCountRequests = BOOKING_STATUSES.map((status) =>
+      client
+        .from('bookings')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', status),
+    );
+
+    const [
+      totalUsersResult,
+      totalTutorsResult,
+      totalProvidersResult,
+      blockedUsersResult,
+      openReportsResult,
+      ...bookingCountResults
+    ] = await Promise.all([
+      client
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .is('deleted_at', null),
+      client
+        .from('tutor_profiles')
+        .select('id', { count: 'exact', head: true }),
+      client
+        .from('provider_profiles')
+        .select('id', { count: 'exact', head: true })
+        .neq('status', 'deleted'),
+      client
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'blocked')
+        .is('deleted_at', null),
+      client
+        .from('reports')
+        .select('id', { count: 'exact', head: true })
+        .in('status', [...ADMIN_OPEN_REPORT_STATUSES]),
+      ...bookingCountRequests,
+    ]);
+
+    const bookingsByStatus: Record<BookingStatus, number> = {
+      cancelled: 0,
+      completed: 0,
+      confirmed: 0,
+      requested: 0,
+    };
+
+    for (const [index, status] of BOOKING_STATUSES.entries()) {
+      const result = bookingCountResults[index];
+      if (!result) throw new AuthBackendUnavailableException();
+      bookingsByStatus[status] = this.readSupabaseCount(
+        result,
+        `Failed to count admin bookings with status ${status}.`,
+      );
+    }
+
+    return {
+      blocked_users: this.readSupabaseCount(
+        blockedUsersResult,
+        'Failed to count blocked admin users.',
+      ),
+      bookings_by_status: bookingsByStatus,
+      open_reports: this.readSupabaseCount(
+        openReportsResult,
+        'Failed to count open admin reports.',
+      ),
+      total_providers: this.readSupabaseCount(
+        totalProvidersResult,
+        'Failed to count admin providers.',
+      ),
+      total_tutors: this.readSupabaseCount(
+        totalTutorsResult,
+        'Failed to count admin tutors.',
+      ),
+      total_users: this.readSupabaseCount(
+        totalUsersResult,
+        'Failed to count admin users.',
+      ),
+    };
+  }
+
+  async listAdminUsers(
+    pagination: CursorPaginationQuery,
+  ): Promise<PaginatedResult<AdminUserRecord>> {
+    const client = this.getClient();
+    let query = client.from('users').select(ADMIN_USER_COLUMNS);
+
+    if (pagination.cursor) {
+      const cursor = decodeAdminUserCursor(pagination.cursor);
+      query = query.or(
+        [
+          `created_at.lt.${cursor.createdAt}`,
+          `and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        ].join(','),
+      );
+    }
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(0, pagination.limit);
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to list admin users.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    const rows = data ?? [];
+    const rolesByUserId = await this.loadRolesForUsers(
+      rows.map((row) => row.id),
+    );
+    const records = rows.map((row): AdminUserRecord => {
+      const roles = rolesByUserId.get(row.id) ?? [];
+
+      return {
+        created_at: row.created_at,
+        email: row.email,
+        id: row.id,
+        roles,
+        status: row.deleted_at ? 'deleted' : row.status,
+        updated_at: row.updated_at,
+      };
+    });
+
+    return buildPaginatedResult(
+      records,
+      pagination.limit,
+      encodeAdminUserCursor,
+    );
+  }
+
+  async updateAdminUserStatusWithAudit(
+    adminUserId: string,
+    targetUserId: string,
+    input: UpdateAdminUserStatusInput,
+  ): Promise<AdminUserRecord | null> {
+    const client = this.getClient();
+    const { data: existing, error: existingError } = await client
+      .from('users')
+      .select(ADMIN_USER_COLUMNS)
+      .eq('id', targetUserId)
+      .maybeSingle();
+
+    if (existingError) {
+      this.logger.error(
+        { code: existingError.code },
+        'Failed to load admin user before status update.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+    if (!existing) return null;
+
+    const previousStatus: UserStatus = existing.deleted_at
+      ? 'deleted'
+      : existing.status;
+    if (previousStatus === 'deleted') {
+      throw new DomainException(
+        ErrorCode.BUSINESS_RULE_VIOLATION,
+        'Deleted users cannot be updated by admin status actions.',
+        {},
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (adminUserId === targetUserId && input.status === 'blocked') {
+      throw new DomainException(
+        ErrorCode.FORBIDDEN,
+        'Admins cannot block their own account.',
+        {},
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const row =
+      previousStatus === input.status
+        ? existing
+        : await this.persistAdminUserStatus(targetUserId, input.status, now);
+
+    const operation = input.status === 'blocked' ? 'block' : 'reactivate';
+    await this.appendAuditLog({
+      action:
+        input.status === 'blocked'
+          ? 'admin.user_status_blocked'
+          : 'admin.user_status_reactivated',
+      actorUserId: adminUserId,
+      metadata: {
+        changed: previousStatus !== input.status,
+        operation,
+        previousStatus,
+        status: input.status,
+      },
+      targetId: targetUserId,
+      targetType: 'user',
+    });
+
+    const roles = (await this.loadRolesForUsers([row.id])).get(row.id) ?? [];
+    return {
+      created_at: row.created_at,
+      email: row.email,
+      id: row.id,
+      roles,
+      status: row.deleted_at ? 'deleted' : row.status,
+      updated_at: row.updated_at,
+    };
+  }
+
+  async listAdminProviders(
+    pagination: CursorPaginationQuery,
+  ): Promise<PaginatedResult<AdminProviderRecord>> {
+    const client = this.getClient();
+    let query = client
+      .from('provider_profiles')
+      .select(ADMIN_PROVIDER_COLUMNS)
+      .neq('status', 'deleted');
+
+    if (pagination.cursor) {
+      const cursor = decodeAdminProviderCursor(pagination.cursor);
+      query = query.or(
+        [
+          `created_at.lt.${cursor.createdAt}`,
+          `and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        ].join(','),
+      );
+    }
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(0, pagination.limit);
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to list admin providers.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    const rows = data ?? [];
+    const serviceCounts = await this.loadProviderServiceCounts(
+      rows.map((row) => row.id),
+    );
+    const records = rows.map(
+      (row): AdminProviderRecord => ({
+        created_at: row.created_at,
+        display_name: row.display_name,
+        id: row.id,
+        service_count: serviceCounts.get(row.id) ?? 0,
+        status: row.status,
+        updated_at: row.updated_at,
+      }),
+    );
+
+    return buildPaginatedResult(
+      records,
+      pagination.limit,
+      encodeAdminProviderCursor,
+    );
+  }
+
+  async listAdminBookings(
+    pagination: CursorPaginationQuery,
+  ): Promise<PaginatedResult<AdminBookingRecord>> {
+    const client = this.getClient();
+    let query = client.from('bookings').select(ADMIN_BOOKING_COLUMNS);
+
+    if (pagination.cursor) {
+      const cursor = decodeAdminBookingCursor(pagination.cursor);
+      query = query.or(
+        [
+          `created_at.lt.${cursor.createdAt}`,
+          `and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        ].join(','),
+      );
+    }
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(0, pagination.limit);
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to list admin bookings.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return buildPaginatedResult(
+      data ?? [],
+      pagination.limit,
+      encodeAdminBookingCursor,
+    );
+  }
+
+  async listAdminAuditLogs(
+    pagination: CursorPaginationQuery,
+  ): Promise<PaginatedResult<AdminAuditLogRecord>> {
+    const client = this.getClient();
+    let query = client.from('audit_logs').select(ADMIN_AUDIT_LOG_COLUMNS);
+
+    if (pagination.cursor) {
+      const cursor = decodeAdminAuditLogCursor(pagination.cursor);
+      query = query.or(
+        [
+          `created_at.lt.${cursor.createdAt}`,
+          `and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        ].join(','),
+      );
+    }
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(0, pagination.limit);
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to list admin audit logs.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return buildPaginatedResult(
+      data ?? [],
+      pagination.limit,
+      encodeAdminAuditLogCursor,
+    );
   }
 
   private async loadOwnedConversationId(
@@ -1515,6 +1881,104 @@ export class SupabaseAdminService implements OnModuleInit {
       );
       throw new AuthBackendUnavailableException();
     }
+  }
+
+  private readSupabaseCount(
+    result: SupabaseCountResult,
+    errorMessage: string,
+  ): number {
+    if (result.error) {
+      this.logger.error({ code: result.error.code }, errorMessage);
+      throw new AuthBackendUnavailableException();
+    }
+
+    return result.count ?? 0;
+  }
+
+  private async loadRolesForUsers(
+    userIds: readonly string[],
+  ): Promise<Map<string, Role[]>> {
+    const rolesByUserId = new Map<string, Role[]>();
+    const uniqueIds = [...new Set(userIds)].filter(Boolean);
+    if (uniqueIds.length === 0) return rolesByUserId;
+
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('user_roles')
+      .select('user_id,role')
+      .in('user_id', uniqueIds);
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to load admin user roles.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    for (const row of data ?? []) {
+      if (!VALID_ROLES.includes(row.role)) continue;
+      const roles = rolesByUserId.get(row.user_id) ?? [];
+      roles.push(row.role);
+      rolesByUserId.set(row.user_id, roles);
+    }
+
+    return rolesByUserId;
+  }
+
+  private async loadProviderServiceCounts(
+    providerProfileIds: readonly string[],
+  ): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    const uniqueIds = [...new Set(providerProfileIds)].filter(Boolean);
+    if (uniqueIds.length === 0) return counts;
+
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('providers')
+      .select('provider_profile_id')
+      .in('provider_profile_id', uniqueIds)
+      .is('deleted_at', null);
+
+    if (error) {
+      this.logger.error(
+        { code: error.code },
+        'Failed to count admin provider services.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    for (const row of data ?? []) {
+      const current = counts.get(row.provider_profile_id) ?? 0;
+      counts.set(row.provider_profile_id, current + 1);
+    }
+
+    return counts;
+  }
+
+  private async persistAdminUserStatus(
+    userId: string,
+    status: UserStatus,
+    updatedAt: string,
+  ) {
+    const client = this.getClient();
+    const { data, error } = await client
+      .from('users')
+      .update({ status, updated_at: updatedAt })
+      .eq('id', userId)
+      .is('deleted_at', null)
+      .select(ADMIN_USER_COLUMNS)
+      .maybeSingle();
+
+    if (error || !data) {
+      this.logger.error(
+        { code: error?.code },
+        'Failed to update admin user status.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    return data;
   }
 
   private getClient(): SupabaseClient<Database> {
@@ -1724,6 +2188,65 @@ export class SupabaseAdminService implements OnModuleInit {
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     return new Date(Date.now() + thirtyDaysMs).toISOString();
   }
+}
+
+interface CreatedAtCursor {
+  createdAt: string;
+  id: string;
+}
+
+function encodeAdminUserCursor(record: AdminUserRecord): string {
+  return encodeCreatedAtCursor('admin-users', record);
+}
+
+function decodeAdminUserCursor(cursor: string): CreatedAtCursor {
+  return decodeCreatedAtCursor(cursor, 'admin-users');
+}
+
+function encodeAdminProviderCursor(record: AdminProviderRecord): string {
+  return encodeCreatedAtCursor('admin-providers', record);
+}
+
+function decodeAdminProviderCursor(cursor: string): CreatedAtCursor {
+  return decodeCreatedAtCursor(cursor, 'admin-providers');
+}
+
+function encodeAdminBookingCursor(record: AdminBookingRecord): string {
+  return encodeCreatedAtCursor('admin-bookings', record);
+}
+
+function decodeAdminBookingCursor(cursor: string): CreatedAtCursor {
+  return decodeCreatedAtCursor(cursor, 'admin-bookings');
+}
+
+function encodeAdminAuditLogCursor(record: AdminAuditLogRecord): string {
+  return encodeCreatedAtCursor('admin-audit-logs', record);
+}
+
+function decodeAdminAuditLogCursor(cursor: string): CreatedAtCursor {
+  return decodeCreatedAtCursor(cursor, 'admin-audit-logs');
+}
+
+function encodeCreatedAtCursor(
+  kind: string,
+  record: { readonly created_at: string; readonly id: string },
+): string {
+  return encodePaginationCursor({
+    kind,
+    createdAt: record.created_at,
+    id: record.id,
+  });
+}
+
+function decodeCreatedAtCursor(
+  cursor: string,
+  expectedKind: string,
+): CreatedAtCursor {
+  const payload = decodePaginationCursor(cursor, expectedKind);
+  return {
+    createdAt: readCursorIsoDateTime(payload, 'createdAt'),
+    id: readCursorUuid(payload, 'id'),
+  };
 }
 
 function toEwktPoint(longitude: number, latitude: number): string {

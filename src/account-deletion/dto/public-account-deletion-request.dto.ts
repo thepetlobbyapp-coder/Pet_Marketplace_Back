@@ -14,7 +14,7 @@ export interface PublicAccountDeletionRequestInput {
 
 export class PublicAccountDeletionRequestDto {
   @ApiProperty({
-    description: 'Email address used for the Pet Marketplace account.',
+    description: 'Email address used for the account on The Pet Lobby.',
     example: 'user@example.com',
     maxLength: EMAIL_LIMIT,
   })
@@ -40,7 +40,7 @@ export class PublicAccountDeletionRequestResponseDto {
 
   @ApiProperty({
     example:
-      'If the email belongs to a Pet Marketplace account, the deletion request has been received.',
+      'If the email belongs to an account on The Pet Lobby, the deletion request has been received.',
   })
   message!: string;
 
@@ -51,7 +51,7 @@ export class PublicAccountDeletionRequestResponseDto {
     return {
       received: true,
       message:
-        'If the email belongs to a Pet Marketplace account, the deletion request has been received.',
+        'If the email belongs to an account on The Pet Lobby, the deletion request has been received.',
       estimatedProcessingDays: 30,
     };
   }

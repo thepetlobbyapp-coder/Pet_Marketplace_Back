@@ -86,7 +86,7 @@ describe('Public account deletion (e2e)', () => {
     expect(res.body).toEqual({
       received: true,
       message:
-        'If the email belongs to a Pet Marketplace account, the deletion request has been received.',
+        'If the email belongs to an account on The Pet Lobby, the deletion request has been received.',
       estimatedProcessingDays: 30,
     });
     expect(

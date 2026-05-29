@@ -17,7 +17,7 @@ export function renderAccountDeletionPage(
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>Request account deletion | Pet Marketplace</title>
+    <title>Request account deletion | The Pet Lobby</title>
     <style>
       :root {
         color-scheme: light;
@@ -194,7 +194,7 @@ export function renderAccountDeletionPage(
   <body>
     <main>
       <section class="page" aria-labelledby="title">
-        <div class="brand">Pet Marketplace</div>
+        <div class="brand">The Pet Lobby</div>
         <div class="panel">
           <h1 id="title">Request account deletion</h1>
           ${submitted ? successNotice() : ''}
@@ -202,7 +202,7 @@ export function renderAccountDeletionPage(
           ${error ? errorNotice() : ''}
           <p>
             Use this form if you no longer have the app installed and want to
-            request deletion of your Pet Marketplace account and associated
+            request deletion of your account on The Pet Lobby and associated
             data.
           </p>
           <p>
@@ -249,8 +249,8 @@ export function renderAccountDeletionPage(
 
 function successNotice(): string {
   return `<p class="notice" role="status">
-    If the email belongs to a Pet Marketplace account, the deletion request has
-    been received. You do not need to submit it again.
+    If the email belongs to an account on The Pet Lobby, the deletion request
+    has been received. You do not need to submit it again.
   </p>`;
 }
 

@@ -13,6 +13,7 @@ const ADMIN_ID = '22222222-2222-4222-8222-222222222222';
 const PROVIDER_ID = '33333333-3333-4333-8333-333333333333';
 const BOOKING_ID = '44444444-4444-4444-8444-444444444444';
 const AUDIT_ID = '55555555-5555-4555-8555-555555555555';
+const REVIEW_ID = '77777777-7777-4777-8777-777777777777';
 
 const ACTIVE_USER: AuthUser = {
   id: USER_ID,
@@ -92,6 +93,19 @@ describe('AdminController (e2e)', () => {
       ],
       nextCursor: null,
     })),
+    listAdminReviews: jest.fn(async (_pagination: unknown) => ({
+      items: [
+        {
+          booking_id: BOOKING_ID,
+          created_at: '2026-05-18T12:04:00.000Z',
+          id: REVIEW_ID,
+          rating: 5,
+          status: 'visible',
+          updated_at: '2026-05-18T12:05:00.000Z',
+        },
+      ],
+      nextCursor: null,
+    })),
     listAdminUsers: jest.fn(async (_pagination: unknown) => ({
       items: [
         {
@@ -113,6 +127,27 @@ describe('AdminController (e2e)', () => {
       status: 'blocked',
       updated_at: '2026-05-18T12:06:00.000Z',
     })),
+    setAdminReviewStatusWithAudit: jest.fn(
+      async (
+        _adminUserId: string,
+        _reviewId: string,
+        status: string,
+      ): Promise<{
+        id: string;
+        booking_id: string;
+        rating: number;
+        status: string;
+        created_at: string;
+        updated_at: string;
+      } | null> => ({
+        id: REVIEW_ID,
+        booking_id: BOOKING_ID,
+        rating: 5,
+        status,
+        created_at: '2026-05-18T12:01:00.000Z',
+        updated_at: '2026-05-18T12:08:00.000Z',
+      }),
+    ),
   };
 
   beforeAll(async () => {
@@ -137,7 +172,9 @@ describe('AdminController (e2e)', () => {
     supabaseAdminMock.listAdminAuditLogs.mockClear();
     supabaseAdminMock.listAdminBookings.mockClear();
     supabaseAdminMock.listAdminProviders.mockClear();
+    supabaseAdminMock.listAdminReviews.mockClear();
     supabaseAdminMock.listAdminUsers.mockClear();
+    supabaseAdminMock.setAdminReviewStatusWithAudit.mockClear();
     supabaseAdminMock.updateAdminUserStatusWithAudit.mockClear();
     supabaseAdminMock.updateAdminUserStatusWithAudit.mockImplementation(
       async () => ({
@@ -327,6 +364,101 @@ describe('AdminController (e2e)', () => {
       .set('Authorization', 'Bearer test-token')
       .send({ status: 'active' })
       .expect(409);
+  });
+
+  it('allows admins to hide and restore a review with a safe response', async () => {
+    resolvedUser = ADMIN_USER;
+
+    const hideRes = await request(app.getHttpServer())
+      .patch(`/api/v1/admin/reviews/${REVIEW_ID}/status`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ status: 'hidden_by_admin' })
+      .expect(200);
+
+    expect(hideRes.body).toEqual({
+      id: REVIEW_ID,
+      bookingId: BOOKING_ID,
+      rating: 5,
+      status: 'hidden_by_admin',
+      createdAt: '2026-05-18T12:01:00.000Z',
+      updatedAt: '2026-05-18T12:08:00.000Z',
+    });
+    expect(
+      supabaseAdminMock.setAdminReviewStatusWithAudit,
+    ).toHaveBeenCalledWith(ADMIN_ID, REVIEW_ID, 'hidden_by_admin');
+    expect(hideRes.body).not.toHaveProperty('reviewerUserId');
+    expect(hideRes.body).not.toHaveProperty('reviewer_user_id');
+  });
+
+  it('lists reviews for admins with a safe envelope', async () => {
+    resolvedUser = ADMIN_USER;
+
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/admin/reviews?limit=20')
+      .set('Authorization', 'Bearer test-token')
+      .expect(200);
+
+    expect(res.body.items[0]).toEqual({
+      bookingId: BOOKING_ID,
+      createdAt: '2026-05-18T12:04:00.000Z',
+      id: REVIEW_ID,
+      rating: 5,
+      status: 'visible',
+      updatedAt: '2026-05-18T12:05:00.000Z',
+    });
+    expect(res.body.items[0]).not.toHaveProperty('reviewerUserId');
+    expect(supabaseAdminMock.listAdminReviews).toHaveBeenCalledWith({
+      cursor: null,
+      limit: 20,
+    });
+  });
+
+  it('requires admin role for the reviews list', async () => {
+    await request(app.getHttpServer())
+      .get('/api/v1/admin/reviews')
+      .set('Authorization', 'Bearer test-token')
+      .expect(403);
+
+    expect(supabaseAdminMock.listAdminReviews).not.toHaveBeenCalled();
+  });
+
+  it('requires admin role for review moderation', async () => {
+    await request(app.getHttpServer())
+      .patch(`/api/v1/admin/reviews/${REVIEW_ID}/status`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ status: 'hidden_by_admin' })
+      .expect(403);
+
+    expect(
+      supabaseAdminMock.setAdminReviewStatusWithAudit,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsafe or unsupported review status payloads', async () => {
+    resolvedUser = ADMIN_USER;
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/admin/reviews/${REVIEW_ID}/status`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ status: 'removed', rating: 1 })
+      .expect(400);
+
+    expect(
+      supabaseAdminMock.setAdminReviewStatusWithAudit,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the moderated review does not exist', async () => {
+    resolvedUser = ADMIN_USER;
+    supabaseAdminMock.setAdminReviewStatusWithAudit.mockResolvedValueOnce(null);
+
+    const res = await request(app.getHttpServer())
+      .patch(`/api/v1/admin/reviews/${REVIEW_ID}/status`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ status: 'visible' })
+      .expect(404);
+
+    expect(res.body.error.code).toBe('NOT_FOUND');
   });
 
   it('lists providers, bookings and audit logs using safe envelopes', async () => {

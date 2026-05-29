@@ -20,6 +20,7 @@ import {
   AdminBookingListResponseDto,
   AdminDashboardResponseDto,
   AdminProviderListResponseDto,
+  AdminReviewListResponseDto,
   AdminUserResponseDto,
   AdminUserListResponseDto,
 } from './dto/admin-response.dto';
@@ -28,6 +29,12 @@ import {
   parseUpdateAdminUserStatusBody,
   type UpdateAdminUserStatusRequestDto,
 } from './dto/update-admin-user-status-request.dto';
+import {
+  parseAdminReviewId,
+  parseUpdateAdminReviewStatusBody,
+  type UpdateAdminReviewStatusRequestDto,
+} from './dto/update-admin-review-status-request.dto';
+import { ReviewResponseDto } from '../bookings/dto/booking-response.dto';
 
 const ADMIN_LIST_DEFAULT_LIMIT = 50;
 const ADMIN_LIST_MAX_LIMIT = 100;
@@ -73,6 +80,26 @@ export class AdminController {
     return AdminUserResponseDto.fromRecord(updated);
   }
 
+  @Patch('reviews/:id/status')
+  @ApiOkResponse({ type: ReviewResponseDto })
+  async updateReviewStatus(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: UpdateAdminReviewStatusRequestDto,
+  ): Promise<ReviewResponseDto> {
+    const reviewId = parseAdminReviewId(id);
+    const input = parseUpdateAdminReviewStatusBody(body);
+    const updated = await this.admin.setAdminReviewStatusWithAudit(
+      user.id,
+      reviewId,
+      input.status,
+    );
+    if (!updated) {
+      throw adminReviewNotFound();
+    }
+    return ReviewResponseDto.fromRecord(updated);
+  }
+
   @Get('providers')
   @ApiOkResponse({ type: AdminProviderListResponseDto })
   async listProviders(
@@ -94,6 +121,16 @@ export class AdminController {
     const pagination = parseAdminListPagination(query);
     const page = await this.admin.listAdminBookings(pagination);
     return AdminBookingListResponseDto.fromRecords(page.items, page.nextCursor);
+  }
+
+  @Get('reviews')
+  @ApiOkResponse({ type: AdminReviewListResponseDto })
+  async listReviews(
+    @Query() query: unknown,
+  ): Promise<AdminReviewListResponseDto> {
+    const pagination = parseAdminListPagination(query);
+    const page = await this.admin.listAdminReviews(pagination);
+    return AdminReviewListResponseDto.fromRecords(page.items, page.nextCursor);
   }
 
   @Get('audit-logs')
@@ -121,6 +158,15 @@ function adminUserNotFound() {
   return new DomainException(
     ErrorCode.NOT_FOUND,
     'Admin user not found.',
+    {},
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+function adminReviewNotFound() {
+  return new DomainException(
+    ErrorCode.NOT_FOUND,
+    'Review not found.',
     {},
     HttpStatus.NOT_FOUND,
   );

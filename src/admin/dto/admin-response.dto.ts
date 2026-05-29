@@ -5,6 +5,7 @@ import type {
   AdminDashboardBookingStatusCountsRecord,
   AdminDashboardRecord,
   AdminProviderRecord,
+  AdminReviewRecord,
   AdminUserRecord,
 } from './admin-records';
 
@@ -163,6 +164,39 @@ export class AdminBookingResponseDto {
   }
 }
 
+export class AdminReviewResponseDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  bookingId!: string;
+
+  @ApiProperty({ example: 5 })
+  rating!: number;
+
+  @ApiProperty({
+    enum: ['visible', 'hidden_by_admin', 'reported', 'removed'],
+  })
+  status!: string;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt!: string;
+
+  @ApiProperty({ format: 'date-time' })
+  updatedAt!: string;
+
+  static fromRecord(record: AdminReviewRecord): AdminReviewResponseDto {
+    return {
+      bookingId: record.booking_id,
+      createdAt: record.created_at,
+      id: record.id,
+      rating: record.rating,
+      status: record.status,
+      updatedAt: record.updated_at,
+    };
+  }
+}
+
 export class AdminAuditLogResponseDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
@@ -265,6 +299,24 @@ export class AdminAuditLogListResponseDto {
       items: records.map((record) =>
         AdminAuditLogResponseDto.fromRecord(record),
       ),
+      nextCursor,
+    };
+  }
+}
+
+export class AdminReviewListResponseDto {
+  @ApiProperty({ type: [AdminReviewResponseDto] })
+  items!: AdminReviewResponseDto[];
+
+  @ApiPropertyOptional({ nullable: true })
+  nextCursor!: string | null;
+
+  static fromRecords(
+    records: AdminReviewRecord[],
+    nextCursor: string | null,
+  ): AdminReviewListResponseDto {
+    return {
+      items: records.map((record) => AdminReviewResponseDto.fromRecord(record)),
       nextCursor,
     };
   }

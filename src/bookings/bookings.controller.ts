@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   HttpStatus,
   Param,
   Patch,
@@ -21,9 +22,11 @@ import { SupabaseAdminService } from '../common/supabase/supabase-admin.service'
 import {
   BookingListResponseDto,
   BookingResponseDto,
+  ReviewResponseDto,
 } from './dto/booking-response.dto';
 import { parseCreateBookingBody } from './dto/create-booking-request.dto';
 import { parseUpdateBookingBody } from './dto/update-booking-request.dto';
+import { parseSubmitReviewBody } from './dto/submit-review-request.dto';
 import {
   bookingNotFound,
   parseOptionalBookingPerspectiveField,
@@ -90,6 +93,36 @@ export class BookingsController {
     );
     if (!booking) throw bookingNotFound();
     return BookingResponseDto.fromRecord(booking);
+  }
+
+  /** Aceite do tutor de que o serviço foi realizado (prova de realização). */
+  @Post(':id/confirmation')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: BookingResponseDto })
+  async confirm(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<BookingResponseDto> {
+    requireTutorProfile(user);
+    const bookingId = parseUuidField(id, 'booking id');
+    const booking = await this.admin.confirmBookingService(user, bookingId);
+    if (!booking) throw bookingNotFound();
+    return BookingResponseDto.fromRecord(booking);
+  }
+
+  /** Avaliação 5★ (sem comentário) do tutor para o prestador da reserva. */
+  @Post(':id/review')
+  @ApiOkResponse({ type: ReviewResponseDto })
+  async review(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ): Promise<ReviewResponseDto> {
+    requireTutorProfile(user);
+    const bookingId = parseUuidField(id, 'booking id');
+    const input = parseSubmitReviewBody(body);
+    const review = await this.admin.submitReview(user, bookingId, input.rating);
+    return ReviewResponseDto.fromRecord(review);
   }
 }
 

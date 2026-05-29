@@ -14,6 +14,7 @@ const TUTOR_PROFILE_ID = '1b6fe9f3-514f-475c-9286-38c19e576116';
 const PROVIDER_ID = '99999999-8888-4777-8666-555555555555';
 const PET_ID = '11111111-2222-4333-8444-555555555555';
 const BOOKING_ID = '33333333-4444-4555-8666-777777777777';
+const REVIEW_ID = '44444444-5555-4666-8777-888888888888';
 
 const ACTIVE_USER: AuthUser = {
   id: '56e4ff57-5355-47bb-904b-27ebde394bf7',
@@ -116,6 +117,9 @@ describe('Bookings (e2e)', () => {
   let createError: DomainException | null;
   let updateResult: BookingRecord | null;
   let updateError: DomainException | null;
+  let reviewError: DomainException | null;
+  let confirmResult: BookingRecord | null;
+  let confirmError: DomainException | null;
 
   const supabaseMock = {
     get isConfigured(): boolean {
@@ -169,6 +173,25 @@ describe('Bookings (e2e)', () => {
           : null;
       },
     ),
+    submitReview: jest.fn(
+      async (_user: AuthUser, _bookingId: string, rating: number) => {
+        if (reviewError) throw reviewError;
+        return {
+          id: REVIEW_ID,
+          booking_id: BOOKING_ID,
+          rating,
+          status: 'visible',
+          created_at: '2026-06-04T10:00:00.000Z',
+          updated_at: '2026-06-04T10:00:00.000Z',
+        };
+      },
+    ),
+    confirmBookingService: jest.fn(
+      async (_user: AuthUser, _bookingId: string) => {
+        if (confirmError) throw confirmError;
+        return confirmResult;
+      },
+    ),
   };
 
   beforeAll(async () => {
@@ -195,6 +218,14 @@ describe('Bookings (e2e)', () => {
     createError = null;
     updateResult = BOOKING_ROW;
     updateError = null;
+    reviewError = null;
+    confirmResult = {
+      ...BOOKING_ROW,
+      status: 'completed',
+      tutor_confirmed_at: '2026-06-04T10:00:00.000Z',
+      can_review: true,
+    };
+    confirmError = null;
     supabaseMock.resolveUser.mockClear();
     supabaseAdminMock.getProviderAvailability.mockClear();
     supabaseAdminMock.getOwnProviderWeeklyAvailability.mockClear();
@@ -203,6 +234,8 @@ describe('Bookings (e2e)', () => {
     supabaseAdminMock.listBookingsForUser.mockClear();
     supabaseAdminMock.createBooking.mockClear();
     supabaseAdminMock.updateBookingStatus.mockClear();
+    supabaseAdminMock.submitReview.mockClear();
+    supabaseAdminMock.confirmBookingService.mockClear();
   });
 
   afterAll(async () => {
@@ -370,6 +403,10 @@ describe('Bookings (e2e)', () => {
     [
       'duplicate time slot',
       { ...VALID_CREATE_BODY, timeSlotIds: ['09:00', '09:00'] },
+    ],
+    [
+      'non-consecutive time slots',
+      { ...VALID_CREATE_BODY, timeSlotIds: ['09:00', '11:00'] },
     ],
     ['malformed date', { ...VALID_CREATE_BODY, date: 'tomorrow' }],
     ['non-UUID providerId', { ...VALID_CREATE_BODY, providerId: 'x' }],
@@ -560,6 +597,152 @@ describe('Bookings (e2e)', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
     expect(supabaseAdminMock.updateBookingStatus).not.toHaveBeenCalled();
   });
+
+  // --- POST /bookings/:id/confirmation ---
+
+  it('POST /bookings/:id/confirmation records the tutor confirmation', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/bookings/${BOOKING_ID}/confirmation`)
+      .set('Authorization', 'Bearer test-token')
+      .expect(200);
+
+    expect(res.body.status).toBe('completed');
+    expect(res.body.tutorConfirmedAt).toBe('2026-06-04T10:00:00.000Z');
+    expect(res.body.canReview).toBe(true);
+    expect(supabaseAdminMock.confirmBookingService).toHaveBeenCalledWith(
+      ACTIVE_USER,
+      BOOKING_ID,
+    );
+    expectSafeBookingPayload(res.body);
+  });
+
+  it('POST /bookings/:id/confirmation returns 409 when the booking is not completed', async () => {
+    confirmError = new DomainException(
+      ErrorCode.BUSINESS_RULE_VIOLATION,
+      'Only a completed booking can be confirmed by the tutor.',
+      {},
+      HttpStatus.CONFLICT,
+    );
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/bookings/${BOOKING_ID}/confirmation`)
+      .set('Authorization', 'Bearer test-token')
+      .expect(409);
+
+    expect(res.body.error.code).toBe('BUSINESS_RULE_VIOLATION');
+  });
+
+  it('POST /bookings/:id/confirmation returns 404 when not the tutor booking', async () => {
+    confirmResult = null;
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/bookings/${BOOKING_ID}/confirmation`)
+      .set('Authorization', 'Bearer test-token')
+      .expect(404);
+
+    expect(res.body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('POST /bookings/:id/confirmation returns 404 without a tutor profile', async () => {
+    resolvedUser = { ...ACTIVE_USER, profiles: {} };
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/bookings/${BOOKING_ID}/confirmation`)
+      .set('Authorization', 'Bearer test-token')
+      .expect(404);
+
+    expect(res.body.error.code).toBe('NOT_FOUND');
+    expect(supabaseAdminMock.confirmBookingService).not.toHaveBeenCalled();
+  });
+
+  // --- POST /bookings/:id/review ---
+
+  it('POST /bookings/:id/review submits a 5-star rating for the tutor', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/bookings/${BOOKING_ID}/review`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ rating: 5 })
+      .expect(201);
+
+    expect(res.body).toEqual({
+      id: REVIEW_ID,
+      bookingId: BOOKING_ID,
+      rating: 5,
+      status: 'visible',
+      createdAt: '2026-06-04T10:00:00.000Z',
+      updatedAt: '2026-06-04T10:00:00.000Z',
+    });
+    expect(supabaseAdminMock.submitReview).toHaveBeenCalledWith(
+      ACTIVE_USER,
+      BOOKING_ID,
+      5,
+    );
+    expectNoReviewerIdentity(res.body);
+  });
+
+  it('POST /bookings/:id/review returns 404 when the booking is not the tutor', async () => {
+    reviewError = new DomainException(
+      ErrorCode.NOT_FOUND,
+      'Booking not found.',
+      {},
+      HttpStatus.NOT_FOUND,
+    );
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/bookings/${BOOKING_ID}/review`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ rating: 4 })
+      .expect(404);
+
+    expect(res.body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('POST /bookings/:id/review returns 409 when the booking is not eligible', async () => {
+    reviewError = new DomainException(
+      ErrorCode.BUSINESS_RULE_VIOLATION,
+      'This booking is not eligible for review yet.',
+      {},
+      HttpStatus.CONFLICT,
+    );
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/bookings/${BOOKING_ID}/review`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ rating: 4 })
+      .expect(409);
+
+    expect(res.body.error.code).toBe('BUSINESS_RULE_VIOLATION');
+  });
+
+  it.each([
+    ['rating below range', { rating: 0 }],
+    ['rating above range', { rating: 6 }],
+    ['non-integer rating', { rating: 4.5 }],
+    ['missing rating', {}],
+    ['field outside allowlist', { rating: 5, comment: 'great' }],
+  ])('POST /bookings/:id/review rejects %s', async (_caseName, body) => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/bookings/${BOOKING_ID}/review`)
+      .set('Authorization', 'Bearer test-token')
+      .send(body)
+      .expect(400);
+
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(supabaseAdminMock.submitReview).not.toHaveBeenCalled();
+  });
+
+  it('POST /bookings/:id/review returns 404 without a tutor profile', async () => {
+    resolvedUser = { ...ACTIVE_USER, profiles: {} };
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/bookings/${BOOKING_ID}/review`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ rating: 5 })
+      .expect(404);
+
+    expect(res.body.error.code).toBe('NOT_FOUND');
+    expect(supabaseAdminMock.submitReview).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -604,4 +787,19 @@ function collectKeys(value: unknown): string[] {
     key,
     ...collectKeys(nested),
   ]);
+}
+
+/** A review response must never expose the reviewer's identity (UK GDPR). */
+function expectNoReviewerIdentity(value: unknown): void {
+  const forbidden = new Set([
+    'reviewerUserId',
+    'reviewer_user_id',
+    'reviewedUserId',
+    'reviewed_user_id',
+    'reviewedProviderProfileId',
+    'reviewed_provider_profile_id',
+  ]);
+  for (const key of collectKeys(value)) {
+    expect(forbidden.has(key)).toBe(false);
+  }
 }

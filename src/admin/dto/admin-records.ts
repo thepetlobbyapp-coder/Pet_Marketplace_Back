@@ -57,3 +57,12 @@ export interface AdminAuditLogRecord {
   readonly target_id: string | null;
   readonly created_at: string;
 }
+
+export interface AdminReviewRecord {
+  readonly id: string;
+  readonly booking_id: string;
+  readonly rating: number;
+  readonly status: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}

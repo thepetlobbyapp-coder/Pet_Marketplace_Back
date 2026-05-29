@@ -84,6 +84,15 @@ export interface CreateBookingWithSlotsRow {
   updated_at: string;
 }
 
+export interface SubmitReviewRow {
+  id: string;
+  booking_id: string;
+  rating: number;
+  status: 'visible' | 'hidden_by_admin' | 'reported' | 'removed';
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -355,6 +364,7 @@ export interface Database {
           price_per_hour_snapshot: number;
           estimated_total_amount: number;
           currency: string;
+          tutor_confirmed_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -370,6 +380,7 @@ export interface Database {
           price_per_hour_snapshot?: number;
           estimated_total_amount?: number;
           currency?: string;
+          tutor_confirmed_at?: string | null;
         };
         Update: {
           service_label?: string;
@@ -379,6 +390,35 @@ export interface Database {
           price_per_hour_snapshot?: number;
           estimated_total_amount?: number;
           currency?: string;
+          tutor_confirmed_at?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      reviews: {
+        Row: {
+          id: string;
+          booking_id: string;
+          reviewer_user_id: string;
+          reviewed_provider_profile_id: string;
+          rating: number;
+          status: Database['public']['Enums']['review_status'];
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          booking_id: string;
+          reviewer_user_id: string;
+          reviewed_provider_profile_id: string;
+          rating: number;
+          status?: Database['public']['Enums']['review_status'];
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          rating?: number;
+          status?: Database['public']['Enums']['review_status'];
           updated_at?: string;
         };
         Relationships: [];
@@ -609,6 +649,20 @@ export interface Database {
         };
         Returns: CreateBookingWithSlotsRow[];
       };
+      submit_review: {
+        Args: {
+          p_booking_id: string;
+          p_reviewer_user_id: string;
+          p_rating: number;
+        };
+        Returns: SubmitReviewRow[];
+      };
+      recompute_provider_rating: {
+        Args: {
+          p_pp_id: string;
+        };
+        Returns: undefined;
+      };
       providers_list_near: {
         Args: {
           p_user_id: string;
@@ -657,6 +711,7 @@ export interface Database {
       provider_status: 'active' | 'paused' | 'blocked' | 'deleted';
       provider_category: 'walk' | 'sitting' | 'transport' | 'boarding';
       booking_status: 'requested' | 'confirmed' | 'cancelled' | 'completed';
+      review_status: 'visible' | 'hidden_by_admin' | 'reported' | 'removed';
       report_status:
         | 'open'
         | 'in_review'

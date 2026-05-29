@@ -78,8 +78,74 @@ export interface BookingRecord {
   counterpart_avatar_url?: string | null;
   counterpart_role?: BookingPerspective | null;
   booking_group_key?: string | null;
+  /** Tutor confirmation of service delivery (proof / future escrow hook). */
+  tutor_confirmed_at?: string | null;
+  /** Decorated per viewer: the tutor may rate this completed service. */
+  can_review?: boolean | null;
+  /** Decorated per viewer: the rating this tutor already gave, if any. */
+  my_review_rating?: number | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Avaliação 5★ (sem comentário nesta fase). */
+export const REVIEW_RATING_MIN = 1;
+export const REVIEW_RATING_MAX = 5;
+
+/** Dias após a data do serviço em que a avaliação é auto-liberada sem aceite. */
+export const REVIEW_AUTO_RELEASE_DAYS = 2;
+
+/** Valida a nota inteira de 1 a 5. */
+export function parseRatingField(value: unknown): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < REVIEW_RATING_MIN ||
+    value > REVIEW_RATING_MAX
+  ) {
+    throw bookingValidationError(
+      `rating must be an integer between ${REVIEW_RATING_MIN} and ${REVIEW_RATING_MAX}.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Regra canônica de elegibilidade da avaliação (espelha a RPC `submit_review`):
+ * serviço concluído E (tutor confirmou OU passaram os dias de auto-liberação).
+ * `bookingDate` é `YYYY-MM-DD`; a auto-liberação usa o início do dia + N dias.
+ */
+export function isReviewEligible(
+  status: BookingStatus,
+  tutorConfirmedAt: string | null | undefined,
+  bookingDate: string,
+  now: Date = new Date(),
+): boolean {
+  if (status !== 'completed') return false;
+  if (tutorConfirmedAt) return true;
+  const released = new Date(`${bookingDate}T00:00:00.000Z`);
+  released.setUTCDate(released.getUTCDate() + REVIEW_AUTO_RELEASE_DAYS);
+  return now.getTime() >= released.getTime();
+}
+
+/** Reserva não elegível para avaliação — mapeado para HTTP 409. */
+export function bookingReviewNotEligible(): DomainException {
+  return new DomainException(
+    ErrorCode.BUSINESS_RULE_VIOLATION,
+    'This booking is not eligible for review yet.',
+    {},
+    HttpStatus.CONFLICT,
+  );
+}
+
+/** Aceite só é possível quando o serviço está concluído — HTTP 409. */
+export function bookingConfirmationNotAllowed(): DomainException {
+  return new DomainException(
+    ErrorCode.BUSINESS_RULE_VIOLATION,
+    'Only a completed booking can be confirmed by the tutor.',
+    {},
+    HttpStatus.CONFLICT,
+  );
 }
 
 export function bookingValidationError(
@@ -194,10 +260,24 @@ export function parseTimeSlotIdsField(value: unknown): BookingTimeSlot[] {
     return slot;
   });
 
-  return [...slots].sort(
+  const sorted = [...slots].sort(
     (left, right) =>
       BOOKING_TIME_SLOTS.indexOf(left) - BOOKING_TIME_SLOTS.indexOf(right),
   );
+
+  // A service is billed per booking, never per slot/day, and its hours must be
+  // a single continuous block (e.g. 09:00,10:00,11:00) — never scattered.
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = BOOKING_TIME_SLOTS.indexOf(sorted[index - 1]!);
+    const current = BOOKING_TIME_SLOTS.indexOf(sorted[index]!);
+    if (current !== previous + 1) {
+      throw bookingValidationError(
+        'Selected hours must be consecutive (a single continuous block).',
+      );
+    }
+  }
+
+  return sorted;
 }
 
 export function parseServiceField(value: unknown): string {

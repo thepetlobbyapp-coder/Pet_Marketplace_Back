@@ -64,6 +64,24 @@ export class BookingResponseDto {
   })
   bookingGroupKey?: string | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    format: 'date-time',
+    description: 'When the tutor confirmed the service was delivered.',
+  })
+  tutorConfirmedAt?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Whether the viewing tutor may rate this completed service.',
+  })
+  canReview?: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Rating (1-5) the viewing tutor already gave, if any.',
+  })
+  myReviewRating?: number | null;
+
   @ApiProperty({ example: 18.5, nullable: true })
   pricePerHourSnapshot!: number | null;
 
@@ -116,6 +134,15 @@ export class BookingResponseDto {
     if (record.booking_group_key !== undefined) {
       response.bookingGroupKey = record.booking_group_key;
     }
+    if (record.tutor_confirmed_at !== undefined) {
+      response.tutorConfirmedAt = record.tutor_confirmed_at;
+    }
+    if (record.can_review !== undefined && record.can_review !== null) {
+      response.canReview = record.can_review;
+    }
+    if (record.my_review_rating !== undefined) {
+      response.myReviewRating = record.my_review_rating;
+    }
 
     return response;
   }
@@ -145,4 +172,46 @@ function toNullableNumber(
   if (value === null || value === undefined) return null;
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Linha da RPC `submit_review` — não expõe o `reviewer_user_id`. */
+export interface ReviewRecord {
+  id: string;
+  booking_id: string;
+  rating: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Contrato seguro de uma avaliação. Nunca expõe a identidade do avaliador. */
+export class ReviewResponseDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  bookingId!: string;
+
+  @ApiProperty({ example: 5 })
+  rating!: number;
+
+  @ApiProperty({ example: 'visible' })
+  status!: string;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt!: string;
+
+  @ApiProperty({ format: 'date-time' })
+  updatedAt!: string;
+
+  static fromRecord(record: ReviewRecord): ReviewResponseDto {
+    return {
+      id: record.id,
+      bookingId: record.booking_id,
+      rating: record.rating,
+      status: record.status,
+      createdAt: record.created_at,
+      updatedAt: record.updated_at,
+    };
+  }
 }

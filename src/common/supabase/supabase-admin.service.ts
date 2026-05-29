@@ -55,8 +55,12 @@ import type { ListProvidersFilter } from '../../providers/dto/list-providers-que
 import {
   BOOKING_STATUSES,
   assertBookingTransition,
+  bookingConfirmationNotAllowed,
+  bookingNotFound,
+  bookingReviewNotEligible,
   bookingSlotTaken,
   bookingValidationError,
+  isReviewEligible,
   type BookingRecord,
   type BookingListQuery,
   type BookingPerspective,
@@ -64,6 +68,7 @@ import {
   type BookingStatus,
 } from '../../bookings/dto/booking-fields';
 import type { CreateBookingInput } from '../../bookings/dto/create-booking-request.dto';
+import type { ReviewRecord } from '../../bookings/dto/booking-response.dto';
 import type {
   ProviderAvailabilityDayInput,
   ProviderAvailabilitySlotState,
@@ -88,9 +93,11 @@ import type {
   AdminBookingRecord,
   AdminDashboardRecord,
   AdminProviderRecord,
+  AdminReviewRecord,
   AdminUserRecord,
 } from '../../admin/dto/admin-records';
 import type { UpdateAdminUserStatusInput } from '../../admin/dto/update-admin-user-status-request.dto';
+import type { AdminMutableReviewStatus } from '../../admin/dto/update-admin-review-status-request.dto';
 import { ErrorCode } from '../errors/error-codes';
 import {
   buildPaginatedResult,
@@ -140,6 +147,8 @@ const ADMIN_PROVIDER_COLUMNS =
   'id,display_name,status,created_at,updated_at' as const;
 const ADMIN_BOOKING_COLUMNS =
   'id,service_label,booking_date,time_slot_id,status,created_at,updated_at' as const;
+const ADMIN_REVIEW_COLUMNS =
+  'id,booking_id,rating,status,created_at,updated_at' as const;
 const ADMIN_AUDIT_LOG_COLUMNS =
   'id,actor_user_id,action,target_type,target_id,created_at' as const;
 const ADMIN_OPEN_REPORT_STATUSES = ['open', 'in_review'] as const;
@@ -1156,7 +1165,193 @@ export class SupabaseAdminService implements OnModuleInit {
       query.perspective,
     );
 
-    return buildPaginatedResult(decorated, query.limit, encodeBookingCursor);
+    const withReviewState = await this.attachReviewState(decorated, user);
+
+    return buildPaginatedResult(
+      withReviewState,
+      query.limit,
+      encodeBookingCursor,
+    );
+  }
+
+  /**
+   * Decora cada reserva do tutor autenticado com o estado de avaliação:
+   * `tutor_confirmed_at`, `can_review` (elegível e ainda sem nota própria) e
+   * `my_review_rating`. Best-effort: se a migration de reviews ainda não foi
+   * aplicada, registra e devolve as reservas sem decoração — nunca derruba a
+   * listagem (mesma disciplina de `attachConversationToBooking`).
+   */
+  private async attachReviewState(
+    records: BookingRecord[],
+    user: AuthUser,
+  ): Promise<BookingRecord[]> {
+    const viewerTutorProfileId = user.profiles?.tutor?.id;
+    if (!viewerTutorProfileId || records.length === 0) return records;
+
+    const tutorRecordIds = records
+      .filter((record) => record.tutor_profile_id === viewerTutorProfileId)
+      .map((record) => record.id);
+    if (tutorRecordIds.length === 0) {
+      return records.map((record) => ({ ...record, can_review: false }));
+    }
+
+    const client = this.getClient();
+
+    try {
+      const [bookingsResult, reviewsResult] = await Promise.all([
+        client
+          .from('bookings')
+          .select('id,tutor_confirmed_at')
+          .in('id', tutorRecordIds),
+        client
+          .from('reviews')
+          .select('booking_id,rating')
+          .eq('reviewer_user_id', user.id)
+          .in('booking_id', tutorRecordIds),
+      ]);
+
+      if (bookingsResult.error) throw bookingsResult.error;
+      if (reviewsResult.error) throw reviewsResult.error;
+
+      const confirmedAtById = new Map<string, string | null>();
+      for (const row of bookingsResult.data ?? []) {
+        confirmedAtById.set(row.id, row.tutor_confirmed_at ?? null);
+      }
+      const ratingByBooking = new Map<string, number>();
+      for (const row of reviewsResult.data ?? []) {
+        ratingByBooking.set(row.booking_id, row.rating);
+      }
+
+      const now = new Date();
+      return records.map((record) => {
+        const isOwnTutorBooking =
+          record.tutor_profile_id === viewerTutorProfileId;
+        if (!isOwnTutorBooking) {
+          return { ...record, can_review: false };
+        }
+        const tutorConfirmedAt = confirmedAtById.get(record.id) ?? null;
+        const myRating = ratingByBooking.get(record.id) ?? null;
+        const eligible = isReviewEligible(
+          record.status,
+          tutorConfirmedAt,
+          record.booking_date,
+          now,
+        );
+        return {
+          ...record,
+          tutor_confirmed_at: tutorConfirmedAt,
+          my_review_rating: myRating,
+          can_review: eligible,
+        };
+      });
+    } catch (err) {
+      this.logger.error(
+        { err },
+        'Failed to decorate bookings with review state.',
+      );
+      return records;
+    }
+  }
+
+  /**
+   * Avaliação 5★ do tutor para o prestador de uma reserva concluída.
+   * Delega a validação de posse, elegibilidade, upsert e recálculo atômico do
+   * agregado à RPC `submit_review`. Mapeia os erros para HTTP.
+   */
+  async submitReview(
+    user: AuthUser,
+    bookingId: string,
+    rating: number,
+  ): Promise<ReviewRecord> {
+    const client = this.getClient();
+    const { data, error } = await client.rpc('submit_review', {
+      p_booking_id: bookingId,
+      p_reviewer_user_id: user.id,
+      p_rating: rating,
+    });
+
+    if (error) {
+      // NO_DATA_FOUND (P0002): reserva inexistente ou não pertence ao tutor.
+      if (error.code === 'P0002') throw bookingNotFound();
+      // check_violation (23514): reserva ainda não elegível para avaliação.
+      if (error.code === '23514') throw bookingReviewNotEligible();
+      this.logger.error({ code: error.code }, 'Failed to submit review.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    const row = (data as ReviewRecord[] | null)?.[0];
+    if (!row) throw bookingNotFound();
+    return row;
+  }
+
+  /**
+   * Aceite do tutor de que o serviço foi realizado (prova / gancho de escrow
+   * futuro). Só é permitido em reserva concluída pertencente ao tutor.
+   * `null` = reserva inexistente ou de outro tutor.
+   */
+  async confirmBookingService(
+    user: AuthUser,
+    bookingId: string,
+  ): Promise<BookingRecord | null> {
+    const tutorProfileId = user.profiles?.tutor?.id;
+    if (!tutorProfileId) return null;
+
+    const client = this.getClient();
+    const booking = await client
+      .from('bookings')
+      .select(`${BOOKING_COLUMNS},tutor_confirmed_at,tutor_profile_id`)
+      .eq('id', bookingId)
+      .maybeSingle();
+
+    if (booking.error) {
+      this.logger.error(
+        { code: booking.error.code },
+        'Failed to load booking for confirmation.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+    if (!booking.data || booking.data.tutor_profile_id !== tutorProfileId) {
+      return null;
+    }
+    if (booking.data.status !== 'completed') {
+      throw bookingConfirmationNotAllowed();
+    }
+
+    const confirmedAt =
+      booking.data.tutor_confirmed_at ?? new Date().toISOString();
+    const { data, error } = await client
+      .from('bookings')
+      .update({ tutor_confirmed_at: confirmedAt, updated_at: new Date().toISOString() })
+      .eq('id', bookingId)
+      .select(`${BOOKING_COLUMNS},tutor_confirmed_at`)
+      .single();
+
+    if (error || !data) {
+      this.logger.error(
+        { code: error?.code },
+        'Failed to confirm booking service.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    const myReview = await client
+      .from('reviews')
+      .select('rating')
+      .eq('reviewer_user_id', user.id)
+      .eq('booking_id', bookingId)
+      .maybeSingle();
+
+    const record: BookingRecord = {
+      ...(data as BookingRecord),
+      can_review: isReviewEligible(
+        data.status,
+        data.tutor_confirmed_at,
+        data.booking_date,
+      ),
+      my_review_rating: myReview.error ? null : (myReview.data?.rating ?? null),
+    };
+    const [withSlots] = await this.attachBookingSlotIds([record]);
+    return withSlots ?? record;
   }
 
   /** Reservas do tutor autenticado, escopadas pelo `tutor_profile_id`. */
@@ -2620,6 +2815,92 @@ export class SupabaseAdminService implements OnModuleInit {
     };
   }
 
+  /**
+   * Moderação admin de uma avaliação: oculta (`hidden_by_admin`) ou restaura
+   * (`visible`). Recalcula o agregado do prestador e registra auditoria sem PII.
+   * `null` = avaliação inexistente. Não expõe `reviewer_user_id`.
+   */
+  async setAdminReviewStatusWithAudit(
+    adminUserId: string,
+    reviewId: string,
+    status: AdminMutableReviewStatus,
+  ): Promise<ReviewRecord | null> {
+    const client = this.getClient();
+    const reviewColumns =
+      'id,booking_id,rating,status,reviewed_provider_profile_id,created_at,updated_at';
+
+    const existing = await client
+      .from('reviews')
+      .select(reviewColumns)
+      .eq('id', reviewId)
+      .maybeSingle();
+
+    if (existing.error) {
+      this.logger.error(
+        { code: existing.error.code },
+        'Failed to load review before admin status update.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+    if (!existing.data) return null;
+
+    const previousStatus = existing.data.status;
+    let row = existing.data;
+
+    if (previousStatus !== status) {
+      const updated = await client
+        .from('reviews')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', reviewId)
+        .select(reviewColumns)
+        .single();
+
+      if (updated.error || !updated.data) {
+        this.logger.error(
+          { code: updated.error?.code },
+          'Failed to update review status.',
+        );
+        throw new AuthBackendUnavailableException();
+      }
+      row = updated.data;
+
+      const recompute = await client.rpc('recompute_provider_rating', {
+        p_pp_id: existing.data.reviewed_provider_profile_id,
+      });
+      if (recompute.error) {
+        this.logger.error(
+          { code: recompute.error.code },
+          'Failed to recompute provider rating after moderation.',
+        );
+        throw new AuthBackendUnavailableException();
+      }
+    }
+
+    await this.appendAuditLog({
+      action:
+        status === 'hidden_by_admin'
+          ? 'admin.review_hidden'
+          : 'admin.review_restored',
+      actorUserId: adminUserId,
+      metadata: {
+        changed: previousStatus !== status,
+        newStatus: status,
+        previousStatus,
+      },
+      targetId: reviewId,
+      targetType: 'review',
+    });
+
+    return {
+      id: row.id,
+      booking_id: row.booking_id,
+      rating: row.rating,
+      status: row.status,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  }
+
   private async persistAdminUserStatus(
     targetUserId: string,
     status: Exclude<UserStatus, 'deleted'>,
@@ -2737,6 +3018,39 @@ export class SupabaseAdminService implements OnModuleInit {
       data ?? [],
       pagination.limit,
       encodeAdminBookingCursor,
+    );
+  }
+
+  async listAdminReviews(
+    pagination: CursorPaginationQuery,
+  ): Promise<PaginatedResult<AdminReviewRecord>> {
+    const client = this.getClient();
+    let query = client.from('reviews').select(ADMIN_REVIEW_COLUMNS);
+
+    if (pagination.cursor) {
+      const cursor = decodeAdminReviewCursor(pagination.cursor);
+      query = query.or(
+        [
+          `created_at.lt.${cursor.createdAt}`,
+          `and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        ].join(','),
+      );
+    }
+
+    const { data, error } = await query
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(0, pagination.limit);
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to list admin reviews.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return buildPaginatedResult(
+      data ?? [],
+      pagination.limit,
+      encodeAdminReviewCursor,
     );
   }
 
@@ -3949,6 +4263,14 @@ function encodeAdminBookingCursor(record: AdminBookingRecord): string {
 
 function decodeAdminBookingCursor(cursor: string): CreatedAtCursor {
   return decodeCreatedAtCursor(cursor, 'admin-bookings');
+}
+
+function encodeAdminReviewCursor(record: AdminReviewRecord): string {
+  return encodeCreatedAtCursor('admin-reviews', record);
+}
+
+function decodeAdminReviewCursor(cursor: string): CreatedAtCursor {
+  return decodeCreatedAtCursor(cursor, 'admin-reviews');
 }
 
 function encodeAdminAuditLogCursor(record: AdminAuditLogRecord): string {

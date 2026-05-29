@@ -115,7 +115,7 @@ $$;
 
 revoke all on function
   public.conversations_open_cold_start(uuid, uuid, integer, timestamptz)
-  from public, anon, authenticated;
+  from public;
 grant execute on function
   public.conversations_open_cold_start(uuid, uuid, integer, timestamptz)
   to service_role;

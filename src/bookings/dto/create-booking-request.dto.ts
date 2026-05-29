@@ -4,6 +4,7 @@ import {
   parseDateField,
   parseServiceField,
   parseTimeSlotField,
+  parseTimeSlotIdsField,
   parseUuidField,
   bookingValidationError,
   BOOKING_TIME_SLOTS,
@@ -14,6 +15,7 @@ import {
 export interface CreateBookingInput {
   providerId: string;
   date: string;
+  timeSlotIds: BookingTimeSlot[];
   timeSlotId: BookingTimeSlot;
   petId: string;
   service: string;
@@ -22,6 +24,7 @@ export interface CreateBookingInput {
 const CREATE_BOOKING_ALLOWED_FIELDS = [
   'providerId',
   'date',
+  'timeSlotIds',
   'timeSlotId',
   'petId',
   'service',
@@ -37,6 +40,13 @@ export class CreateBookingRequestDto {
   @ApiProperty({ enum: BOOKING_TIME_SLOTS, example: '09:00' })
   timeSlotId!: BookingTimeSlot;
 
+  @ApiProperty({
+    enum: BOOKING_TIME_SLOTS,
+    isArray: true,
+    example: ['09:00', '10:00'],
+  })
+  timeSlotIds!: BookingTimeSlot[];
+
   @ApiProperty({ format: 'uuid' })
   petId!: string;
 
@@ -47,16 +57,26 @@ export class CreateBookingRequestDto {
 export function parseCreateBookingBody(value: unknown): CreateBookingInput {
   const body = asAllowlistedBody(value, CREATE_BOOKING_ALLOWED_FIELDS);
 
-  for (const field of CREATE_BOOKING_ALLOWED_FIELDS) {
+  for (const field of ['providerId', 'date', 'petId', 'service'] as const) {
     if (!(field in body)) {
       throw bookingValidationError(`${field} is required.`);
     }
   }
 
+  if (!('timeSlotId' in body) && !('timeSlotIds' in body)) {
+    throw bookingValidationError('timeSlotIds is required.');
+  }
+
+  const timeSlotIds =
+    'timeSlotIds' in body
+      ? parseTimeSlotIdsField(body.timeSlotIds)
+      : [parseTimeSlotField(body.timeSlotId)];
+
   return {
     providerId: parseUuidField(body.providerId, 'providerId'),
     date: parseDateField(body.date),
-    timeSlotId: parseTimeSlotField(body.timeSlotId),
+    timeSlotIds,
+    timeSlotId: timeSlotIds[0]!,
     petId: parseUuidField(body.petId, 'petId'),
     service: parseServiceField(body.service),
   };

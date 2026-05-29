@@ -6,17 +6,37 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/auth/current-user.decorator';
 import type { AuthUser } from '../common/auth/auth-user';
 import { DomainException } from '../common/errors/domain.exception';
 import { ErrorCode } from '../common/errors/error-codes';
+import {
+  type CursorPaginationConfig,
+  parseCursorPaginationQuery,
+} from '../common/pagination/cursor-pagination';
 import { SupabaseAdminService } from '../common/supabase/supabase-admin.service';
-import { BookingResponseDto } from './dto/booking-response.dto';
+import {
+  BookingListResponseDto,
+  BookingResponseDto,
+} from './dto/booking-response.dto';
 import { parseCreateBookingBody } from './dto/create-booking-request.dto';
 import { parseUpdateBookingBody } from './dto/update-booking-request.dto';
-import { bookingNotFound, parseUuidField } from './dto/booking-fields';
+import {
+  bookingNotFound,
+  parseOptionalBookingPerspectiveField,
+  parseOptionalStatusField,
+  parseUuidField,
+} from './dto/booking-fields';
+
+const BOOKINGS_DEFAULT_LIMIT = 10;
+const BOOKINGS_MAX_LIMIT = 50;
+const BOOKINGS_PAGINATION_CONFIG: CursorPaginationConfig = {
+  defaultLimit: BOOKINGS_DEFAULT_LIMIT,
+  maxLimit: BOOKINGS_MAX_LIMIT,
+};
 
 /**
  * Bloco 4G: Bookings API do tutor autenticado.
@@ -29,12 +49,17 @@ export class BookingsController {
   constructor(private readonly admin: SupabaseAdminService) {}
 
   @Get()
-  @ApiOkResponse({ type: BookingResponseDto, isArray: true })
-  async list(@CurrentUser() user: AuthUser): Promise<BookingResponseDto[]> {
-    const tutorProfileId = user.profiles?.tutor?.id;
-    if (!tutorProfileId) return [];
-    const bookings = await this.admin.listBookings(tutorProfileId);
-    return bookings.map((booking) => BookingResponseDto.fromRecord(booking));
+  @ApiOkResponse({ type: BookingListResponseDto })
+  async list(
+    @CurrentUser() user: AuthUser,
+    @Query() query: unknown,
+  ): Promise<BookingListResponseDto> {
+    const listQuery = parseBookingListQuery(query);
+    if (!user.profiles?.tutor && !user.profiles?.provider) {
+      return { items: [], nextCursor: null };
+    }
+    const page = await this.admin.listBookingsForUser(user, listQuery);
+    return BookingListResponseDto.fromRecords(page.items, page.nextCursor);
   }
 
   @Post()
@@ -68,10 +93,24 @@ export class BookingsController {
   }
 }
 
-/**
- * Reservas exigem um `tutor_profile`. O backend ainda não cria esse perfil
- * automaticamente (lacuna registrada em PROGRESS, fora do escopo do Bloco 4G).
- */
+function parseBookingListQuery(query: unknown) {
+  const pagination = parseCursorPaginationQuery(
+    query,
+    BOOKINGS_PAGINATION_CONFIG,
+  );
+  const fields =
+    query && typeof query === 'object' && !Array.isArray(query)
+      ? (query as Record<string, unknown>)
+      : {};
+
+  return {
+    ...pagination,
+    perspective: parseOptionalBookingPerspectiveField(fields.perspective),
+    status: parseOptionalStatusField(fields.status),
+  };
+}
+
+/** Reservas exigem um `tutor_profile`, garantido no bootstrap do usuario tutor. */
 function requireTutorProfile(user: AuthUser): string {
   const tutorProfileId = user.profiles?.tutor?.id;
   if (!tutorProfileId) {

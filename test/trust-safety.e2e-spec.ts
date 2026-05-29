@@ -82,7 +82,10 @@ describe('TrustSafety (e2e)', () => {
     blockConversationParticipant: jest.fn(
       async (_user: AuthUser, _conversationId: string) => blockResult,
     ),
-    listAdminReports: jest.fn(async () => [REPORT_ROW]),
+    listAdminReports: jest.fn(async (_pagination: unknown) => ({
+      items: [REPORT_ROW],
+      nextCursor: null,
+    })),
     updateAdminReportStatusWithAudit: jest.fn(
       async (
         _adminUserId: string,
@@ -282,17 +285,24 @@ describe('TrustSafety (e2e)', () => {
       .set('Authorization', 'Bearer test-token')
       .expect(200);
 
-    expect(res.body).toEqual([
-      {
-        id: REPORT_ID,
-        status: 'open',
-        category: 'safety_concern',
-        targetType: 'conversation',
-        targetId: CONVERSATION_ID,
-        createdAt: REPORT_ROW.created_at,
-        updatedAt: REPORT_ROW.updated_at,
-      },
-    ]);
+    expect(res.body).toEqual({
+      items: [
+        {
+          id: REPORT_ID,
+          status: 'open',
+          category: 'safety_concern',
+          targetType: 'conversation',
+          targetId: CONVERSATION_ID,
+          createdAt: REPORT_ROW.created_at,
+          updatedAt: REPORT_ROW.updated_at,
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(supabaseAdminMock.listAdminReports).toHaveBeenCalledWith({
+      cursor: null,
+      limit: 50,
+    });
     expectSafeTrustSafetyPayload(res.body);
   });
 
@@ -322,7 +332,7 @@ describe('TrustSafety (e2e)', () => {
     );
 
     const res = await request(app.getHttpServer())
-      .patch('/api/v1/admin/reports/' + REPORT_ID)
+      .patch(`/api/v1/admin/reports/${REPORT_ID}`)
       .set('Authorization', 'Bearer test-token')
       .send({ status: 'in_review', internalNote: 'Internal moderation note.' })
       .expect(503);

@@ -14,6 +14,8 @@ describe('openConversation cold-start rate limit (e2e)', () => {
   const PROVIDER_PROFILE_ID = '99999999-8888-4777-8666-000000000001';
   const PROVIDER_ID = '99999999-8888-4777-8666-555555555555';
   const CONVERSATION_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa';
+  const PROVIDER_AVATAR_PATH = `${PROVIDER_USER_ID}/avatar.jpg`;
+  const PROVIDER_AVATAR_URL = 'https://cdn.example.com/provider-avatar.jpg';
 
   function buildService(client: unknown): SupabaseAdminService {
     const config = { get: () => undefined };
@@ -37,7 +39,7 @@ describe('openConversation cold-start rate limit (e2e)', () => {
   }
 
   function buildClient(rpcData: Array<Record<string, unknown>>): {
-    client: { from: jest.Mock; rpc: jest.Mock };
+    client: { from: jest.Mock; rpc: jest.Mock; storage: unknown };
     tables: string[];
   } {
     const tables: string[] = [];
@@ -45,30 +47,57 @@ describe('openConversation cold-start rate limit (e2e)', () => {
       from: jest.fn((table: string) => {
         tables.push(table);
         if (table === 'providers') {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: {
+          const query = {
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: {
+                  provider_profile_id: PROVIDER_PROFILE_ID,
+                  deleted_at: null,
+                },
+                error: null,
+              }),
+            }),
+            in: () => ({
+              is: async () => ({
+                data: [
+                  {
+                    id: PROVIDER_ID,
                     provider_profile_id: PROVIDER_PROFILE_ID,
-                    deleted_at: null,
+                    service_label: 'Dog walking',
+                    avatar_url: null,
                   },
-                  error: null,
-                }),
+                ],
+                error: null,
               }),
             }),
           };
+          return {
+            select: () => query,
+          };
         }
         if (table === 'provider_profiles') {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: { user_id: PROVIDER_USER_ID, status: 'active' },
-                  error: null,
-                }),
+          const query = {
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { user_id: PROVIDER_USER_ID, status: 'active' },
+                error: null,
               }),
             }),
+            in: () => ({
+              eq: async () => ({
+                data: [
+                  {
+                    id: PROVIDER_PROFILE_ID,
+                    display_name: 'Provider Test',
+                    user_id: PROVIDER_USER_ID,
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+          return {
+            select: () => query,
           };
         }
         if (table === 'user_blocks') {
@@ -99,7 +128,20 @@ describe('openConversation cold-start rate limit (e2e)', () => {
         if (table === 'users') {
           const query = {
             eq: () => query,
+            in: () => query,
             is: () => query,
+            then: (
+              resolve: (value: {
+                data: Array<{ avatar_url: string | null; id: string }>;
+                error: null;
+              }) => unknown,
+            ) =>
+              resolve({
+                data: [
+                  { id: PROVIDER_USER_ID, avatar_url: PROVIDER_AVATAR_PATH },
+                ],
+                error: null,
+              }),
             maybeSingle: async () => ({
               data: { id: PROVIDER_USER_ID },
               error: null,
@@ -110,6 +152,14 @@ describe('openConversation cold-start rate limit (e2e)', () => {
         throw new Error(`Unexpected table access: ${table}`);
       }),
       rpc: jest.fn(async () => ({ data: rpcData, error: null })),
+      storage: {
+        from: () => ({
+          createSignedUrl: async () => ({
+            data: { signedUrl: PROVIDER_AVATAR_URL },
+            error: null,
+          }),
+        }),
+      },
     };
     return { client, tables };
   }
@@ -139,6 +189,10 @@ describe('openConversation cold-start rate limit (e2e)', () => {
       last_message_text: null,
       last_message_at: null,
       last_message_from_provider: false,
+      counterpart_avatar_url: PROVIDER_AVATAR_URL,
+      counterpart_name: 'Provider Test',
+      counterpart_service_label: 'Dog walking',
+      viewer_is_provider: false,
     });
     expect(client.rpc).toHaveBeenCalledWith(
       'conversations_open_cold_start',

@@ -25,6 +25,15 @@ export interface ProviderListingRow {
   bio: string | null;
 }
 
+export interface ConversationOpenColdStartRow {
+  status: 'ok' | 'rate_limited';
+  id: string | null;
+  provider_id: string | null;
+  last_message_text: string | null;
+  last_message_at: string | null;
+  last_message_from_provider: boolean | null;
+}
+
 export interface AdminUpdateReportStatusWithAuditRow {
   id: string;
   status: 'open' | 'in_review' | 'action_taken' | 'dismissed' | 'closed';
@@ -41,22 +50,36 @@ export interface AdminUpdateReportStatusWithAuditRow {
   updated_at: string;
 }
 
-export interface ConversationOpenColdStartRow {
-  status: 'ok' | 'rate_limited';
-  id: string | null;
-  provider_id: string | null;
-  last_message_text: string | null;
-  last_message_at: string | null;
-  last_message_from_provider: boolean | null;
-}
-
-export interface EnsureProviderProfileRow {
+export interface TutorProfileOnboardingRow {
   id: string;
   display_name: string;
-  status: Database['public']['Enums']['provider_status'];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProviderProfileOnboardingRow {
+  id: string;
+  display_name: string;
+  status: 'active' | 'paused' | 'blocked' | 'deleted';
   service_radius_km: number;
   rating_average: number | null;
   rating_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateBookingWithSlotsRow {
+  id: string;
+  provider_id: string;
+  pet_id: string;
+  service_label: string;
+  booking_date: string;
+  time_slot_id: string;
+  time_slot_ids: string[];
+  status: 'requested' | 'confirmed' | 'cancelled' | 'completed';
+  price_per_hour_snapshot: number;
+  estimated_total_amount: number;
+  currency: string;
   created_at: string;
   updated_at: string;
 }
@@ -71,10 +94,10 @@ export interface Database {
           phone: string | null;
           status: Database['public']['Enums']['user_status'];
           locale: string;
-          avatar_url: string | null;
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          avatar_url: string | null;
         };
         Insert: {
           id: string;
@@ -82,19 +105,19 @@ export interface Database {
           phone?: string | null;
           status?: Database['public']['Enums']['user_status'];
           locale?: string;
-          avatar_url?: string | null;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          avatar_url?: string | null;
         };
         Update: {
           email?: string;
           phone?: string | null;
           status?: Database['public']['Enums']['user_status'];
           locale?: string;
-          avatar_url?: string | null;
           updated_at?: string;
           deleted_at?: string | null;
+          avatar_url?: string | null;
         };
         Relationships: [];
       };
@@ -329,6 +352,9 @@ export interface Database {
           booking_date: string;
           time_slot_id: string;
           status: Database['public']['Enums']['booking_status'];
+          price_per_hour_snapshot: number;
+          estimated_total_amount: number;
+          currency: string;
           created_at: string;
           updated_at: string;
         };
@@ -341,9 +367,71 @@ export interface Database {
           booking_date: string;
           time_slot_id: string;
           status?: Database['public']['Enums']['booking_status'];
+          price_per_hour_snapshot?: number;
+          estimated_total_amount?: number;
+          currency?: string;
         };
         Update: {
           service_label?: string;
+          booking_date?: string;
+          time_slot_id?: string;
+          status?: Database['public']['Enums']['booking_status'];
+          price_per_hour_snapshot?: number;
+          estimated_total_amount?: number;
+          currency?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      provider_availability_rules: {
+        Row: {
+          id: string;
+          provider_profile_id: string;
+          weekday: number;
+          time_slot_id: string;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          provider_profile_id: string;
+          weekday: number;
+          time_slot_id: string;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          weekday?: number;
+          time_slot_id?: string;
+          is_active?: boolean;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      booking_slots: {
+        Row: {
+          id: string;
+          booking_id: string;
+          provider_id: string;
+          booking_date: string;
+          time_slot_id: string;
+          status: Database['public']['Enums']['booking_status'];
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          booking_id: string;
+          provider_id: string;
+          booking_date: string;
+          time_slot_id: string;
+          status?: Database['public']['Enums']['booking_status'];
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
           booking_date?: string;
           time_slot_id?: string;
           status?: Database['public']['Enums']['booking_status'];
@@ -373,6 +461,7 @@ export interface Database {
           last_message_from_provider?: boolean;
         };
         Update: {
+          booking_id?: string | null;
           last_message_text?: string | null;
           last_message_at?: string | null;
           last_message_from_provider?: boolean;
@@ -498,22 +587,6 @@ export interface Database {
     };
     Views: Record<string, never>;
     Functions: {
-      conversations_open_cold_start: {
-        Args: {
-          p_tutor_profile_id: string;
-          p_provider_id: string;
-          p_limit: number;
-          p_window_start: string;
-        };
-        Returns: ConversationOpenColdStartRow[];
-      };
-      ensure_provider_profile: {
-        Args: {
-          p_user_id: string;
-          p_display_name: string;
-        };
-        Returns: EnsureProviderProfileRow[];
-      };
       admin_update_report_status_with_audit: {
         Args: {
           p_admin_user_id: string;
@@ -522,6 +595,19 @@ export interface Database {
           p_internal_note: string | null;
         };
         Returns: AdminUpdateReportStatusWithAuditRow[];
+      };
+      create_booking_with_slots: {
+        Args: {
+          p_tutor_profile_id: string;
+          p_provider_id: string;
+          p_pet_id: string;
+          p_service_label: string;
+          p_booking_date: string;
+          p_time_slot_ids: string[];
+          p_price_per_hour: number;
+          p_currency?: string;
+        };
+        Returns: CreateBookingWithSlotsRow[];
       };
       providers_list_near: {
         Args: {
@@ -539,6 +625,29 @@ export interface Database {
           p_provider_id: string;
         };
         Returns: ProviderListingRow[];
+      };
+      conversations_open_cold_start: {
+        Args: {
+          p_tutor_profile_id: string;
+          p_provider_id: string;
+          p_limit: number;
+          p_window_start: string;
+        };
+        Returns: ConversationOpenColdStartRow[];
+      };
+      ensure_tutor_profile: {
+        Args: {
+          p_user_id: string;
+          p_display_name: string;
+        };
+        Returns: TutorProfileOnboardingRow[];
+      };
+      ensure_provider_profile: {
+        Args: {
+          p_user_id: string;
+          p_display_name: string;
+        };
+        Returns: ProviderProfileOnboardingRow[];
       };
     };
     Enums: {

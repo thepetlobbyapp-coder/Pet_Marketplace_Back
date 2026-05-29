@@ -244,9 +244,7 @@ export class AdminBookingListResponseDto {
     nextCursor: string | null,
   ): AdminBookingListResponseDto {
     return {
-      items: records.map((record) =>
-        AdminBookingResponseDto.fromRecord(record),
-      ),
+      items: records.map((record) => AdminBookingResponseDto.fromRecord(record)),
       nextCursor,
     };
   }

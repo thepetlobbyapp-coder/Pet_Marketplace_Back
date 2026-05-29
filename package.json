@@ -15,7 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "test": "jest --passWithNoTests",
+    "test": "jest --config jest-e2e.json --runInBand",
     "test:e2e": "jest --config jest-e2e.json",
     "auth:roles:check": "node scripts/auth/check-user-roles.mjs",
     "auth:roles:set": "node scripts/auth/set-user-role.mjs",

@@ -15,9 +15,6 @@
 --     to anon, authenticated;
 --   grant execute on function public.providers_get_one(uuid, uuid)
 --     to anon, authenticated;
---   grant execute on function
---     public.conversations_open_cold_start(uuid, uuid, integer, timestamptz)
---     to anon, authenticated;
 
 revoke all on function public.ensure_tutor_profile(uuid, text)
   from public, anon, authenticated;
@@ -28,9 +25,6 @@ revoke all on function
   from public, anon, authenticated;
 revoke all on function public.providers_get_one(uuid, uuid)
   from public, anon, authenticated;
-revoke all on function
-  public.conversations_open_cold_start(uuid, uuid, integer, timestamptz)
-  from public, anon, authenticated;
 
 grant execute on function public.ensure_tutor_profile(uuid, text)
   to service_role;
@@ -40,7 +34,4 @@ grant execute on function
   public.providers_list_near(uuid, text, text, integer, integer)
   to service_role;
 grant execute on function public.providers_get_one(uuid, uuid)
-  to service_role;
-grant execute on function
-  public.conversations_open_cold_start(uuid, uuid, integer, timestamptz)
   to service_role;

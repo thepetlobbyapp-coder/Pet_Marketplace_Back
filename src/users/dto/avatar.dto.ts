@@ -3,7 +3,9 @@ import { ApiProperty } from '@nestjs/swagger';
 import { DomainException } from '../../common/errors/domain.exception';
 import { ErrorCode } from '../../common/errors/error-codes';
 
+/** Hard byte limit accepted by the API (mirrors the Storage bucket cap). */
 export const AVATAR_MAX_SIZE_BYTES = 5 * 1024 * 1024;
+/** Allowed MIME types — both client-declared and magic-byte-verified. */
 export const AVATAR_ALLOWED_MIME = [
   'image/jpeg',
   'image/png',
@@ -11,9 +13,13 @@ export const AVATAR_ALLOWED_MIME = [
 ] as const;
 export type AvatarMime = (typeof AVATAR_ALLOWED_MIME)[number];
 
+/** Minimum/maximum dimensions accepted at validation. */
 export const AVATAR_MIN_DIMENSION = 256;
 export const AVATAR_MAX_DIMENSION = 4096;
+
+/** Final stored size after the server resize. */
 export const AVATAR_OUTPUT_DIMENSION = 256;
+/** Signed URL TTL returned to the client (1h, refreshed by GET /me). */
 export const AVATAR_SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 export class AvatarResponseDto {

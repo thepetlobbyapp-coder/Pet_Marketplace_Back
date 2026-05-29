@@ -82,10 +82,7 @@ export class PetsController {
   }
 }
 
-/**
- * Pets exigem um `tutor_profile` existente. O backend ainda não cria esse
- * perfil (fora do escopo do Bloco 4B) — ver lacuna registrada em PROGRESS.
- */
+/** Pets exigem um `tutor_profile`, garantido no bootstrap do usuario tutor. */
 function requireTutorProfile(user: AuthUser): string {
   const tutorProfileId = user.profiles?.tutor?.id;
   if (!tutorProfileId) {

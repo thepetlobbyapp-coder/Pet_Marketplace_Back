@@ -13,6 +13,7 @@ import type {
 } from '../src/conversations/dto/conversation-fields';
 
 const TUTOR_PROFILE_ID = '1b6fe9f3-514f-475c-9286-38c19e576116';
+const PROVIDER_PROFILE_ID = '2a0a2ea6-1f58-4690-94ce-d55728954e0e';
 const PROVIDER_ID = '99999999-8888-4777-8666-555555555555';
 const OTHER_PROVIDER_ID = '88888888-7777-4666-8555-444444444444';
 const CONVERSATION_ID = '44444444-5555-4666-8777-888888888888';
@@ -36,6 +37,15 @@ const CONVERSATION_ROW: ConversationRecord = {
   last_message_text: 'See you at 9am.',
   last_message_at: '2026-05-22T11:00:00.000Z',
   last_message_from_provider: true,
+};
+
+const PROVIDER_CONVERSATION_ROW: ConversationRecord = {
+  ...CONVERSATION_ROW,
+  counterpart_avatar_url: 'https://cdn.example.com/tutor-avatar.jpg',
+  counterpart_name: 'Israel Tutor',
+  counterpart_service_label: 'Tutor conversation',
+  last_message_from_provider: false,
+  viewer_is_provider: true,
 };
 
 const MESSAGE_ROW: MessageRecord = {
@@ -62,12 +72,37 @@ describe('Conversations (e2e)', () => {
   };
 
   const supabaseAdminMock = {
-    listConversations: jest.fn(async (_tutorProfileId: string) => [
-      CONVERSATION_ROW,
-    ]),
+    listConversations: jest.fn(
+      async (_tutorProfileId: string, _pagination: unknown) => ({
+        items: [CONVERSATION_ROW],
+        nextCursor: null,
+      }),
+    ),
+    listConversationsForUser: jest.fn(
+      async (user: AuthUser, _pagination: unknown) => ({
+        items: [
+          user.profiles?.provider && !user.profiles?.tutor
+            ? PROVIDER_CONVERSATION_ROW
+            : CONVERSATION_ROW,
+        ],
+        nextCursor: null,
+      }),
+    ),
     listMessages: jest.fn(
-      async (_tutorProfileId: string, _conversationId: string) =>
-        messagesResult,
+      async (
+        _tutorProfileId: string,
+        _conversationId: string,
+        _pagination: unknown,
+      ) =>
+        messagesResult === null
+          ? null
+          : { items: messagesResult, nextCursor: null },
+    ),
+    listMessagesForUser: jest.fn(
+      async (_user: AuthUser, _conversationId: string, _pagination: unknown) =>
+        messagesResult === null
+          ? null
+          : { items: messagesResult, nextCursor: null },
     ),
     createMessage: jest.fn(
       async (
@@ -76,6 +111,12 @@ describe('Conversations (e2e)', () => {
         _conversationId: string,
         text: string,
       ) => {
+        if (createError) throw createError;
+        return createResult ? { ...createResult, body: text } : null;
+      },
+    ),
+    createMessageForUser: jest.fn(
+      async (_user: AuthUser, _conversationId: string, text: string) => {
         if (createError) throw createError;
         return createResult ? { ...createResult, body: text } : null;
       },
@@ -122,8 +163,11 @@ describe('Conversations (e2e)', () => {
     openConversationError = null;
     supabaseMock.resolveUser.mockClear();
     supabaseAdminMock.listConversations.mockClear();
+    supabaseAdminMock.listConversationsForUser.mockClear();
     supabaseAdminMock.listMessages.mockClear();
+    supabaseAdminMock.listMessagesForUser.mockClear();
     supabaseAdminMock.createMessage.mockClear();
+    supabaseAdminMock.createMessageForUser.mockClear();
     supabaseAdminMock.openConversation.mockClear();
   });
 
@@ -139,22 +183,61 @@ describe('Conversations (e2e)', () => {
       .set('Authorization', 'Bearer test-token')
       .expect(200);
 
-    expect(res.body).toEqual([
-      {
-        id: CONVERSATION_ID,
-        providerId: PROVIDER_ID,
-        lastMessage: 'See you at 9am.',
-        lastTime: '2026-05-22T11:00:00.000Z',
-        unread: true,
-      },
-    ]);
-    expect(supabaseAdminMock.listConversations).toHaveBeenCalledWith(
-      TUTOR_PROFILE_ID,
+    expect(res.body).toEqual({
+      items: [
+        {
+          id: CONVERSATION_ID,
+          providerId: PROVIDER_ID,
+          lastMessage: 'See you at 9am.',
+          lastTime: '2026-05-22T11:00:00.000Z',
+          unread: true,
+          counterpartAvatarUrl: null,
+          counterpartName: null,
+          counterpartService: null,
+          viewerIsProvider: false,
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(supabaseAdminMock.listConversationsForUser).toHaveBeenCalledWith(
+      ACTIVE_USER,
+      { cursor: null, limit: 20 },
     );
     expectSafeConversationPayload(res.body);
   });
 
-  it('GET /conversations returns an empty list without a tutor profile', async () => {
+  it('GET /conversations returns provider conversation summaries', async () => {
+    resolvedUser = providerOnlyUser();
+
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/conversations')
+      .set('Authorization', 'Bearer test-token')
+      .expect(200);
+
+    expect(res.body).toEqual({
+      items: [
+        {
+          id: CONVERSATION_ID,
+          providerId: PROVIDER_ID,
+          lastMessage: 'See you at 9am.',
+          lastTime: '2026-05-22T11:00:00.000Z',
+          unread: true,
+          counterpartAvatarUrl: 'https://cdn.example.com/tutor-avatar.jpg',
+          counterpartName: 'Israel Tutor',
+          counterpartService: 'Tutor conversation',
+          viewerIsProvider: true,
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(supabaseAdminMock.listConversationsForUser).toHaveBeenCalledWith(
+      providerOnlyUser(),
+      { cursor: null, limit: 20 },
+    );
+    expectSafeConversationPayload(res.body);
+  });
+
+  it('GET /conversations returns an empty list without a care profile', async () => {
     resolvedUser = { ...ACTIVE_USER, profiles: {} };
 
     const res = await request(app.getHttpServer())
@@ -162,8 +245,8 @@ describe('Conversations (e2e)', () => {
       .set('Authorization', 'Bearer test-token')
       .expect(200);
 
-    expect(res.body).toEqual([]);
-    expect(supabaseAdminMock.listConversations).not.toHaveBeenCalled();
+    expect(res.body).toEqual({ items: [], nextCursor: null });
+    expect(supabaseAdminMock.listConversationsForUser).not.toHaveBeenCalled();
   });
 
   // --- GET /conversations/:id/messages ---
@@ -174,17 +257,21 @@ describe('Conversations (e2e)', () => {
       .set('Authorization', 'Bearer test-token')
       .expect(200);
 
-    expect(res.body).toEqual([
-      {
-        id: MESSAGE_ID,
-        fromProvider: false,
-        text: 'Hi! Is 9am still available?',
-        time: '2026-05-22T10:30:00.000Z',
-      },
-    ]);
-    expect(supabaseAdminMock.listMessages).toHaveBeenCalledWith(
-      TUTOR_PROFILE_ID,
+    expect(res.body).toEqual({
+      items: [
+        {
+          id: MESSAGE_ID,
+          fromProvider: false,
+          text: 'Hi! Is 9am still available?',
+          time: '2026-05-22T10:30:00.000Z',
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(supabaseAdminMock.listMessagesForUser).toHaveBeenCalledWith(
+      ACTIVE_USER,
       CONVERSATION_ID,
+      { cursor: null, limit: 50 },
     );
     expectSafeConversationPayload(res.body);
   });
@@ -201,7 +288,7 @@ describe('Conversations (e2e)', () => {
     expect(res.body.error.details).toEqual({});
   });
 
-  it('GET /conversations/:id/messages returns 404 without a tutor profile', async () => {
+  it('GET /conversations/:id/messages returns 404 without a care profile', async () => {
     resolvedUser = { ...ACTIVE_USER, profiles: {} };
 
     const res = await request(app.getHttpServer())
@@ -210,7 +297,7 @@ describe('Conversations (e2e)', () => {
       .expect(404);
 
     expect(res.body.error.code).toBe('NOT_FOUND');
-    expect(supabaseAdminMock.listMessages).not.toHaveBeenCalled();
+    expect(supabaseAdminMock.listMessagesForUser).not.toHaveBeenCalled();
   });
 
   it('GET /conversations/:id/messages rejects a non-UUID id', async () => {
@@ -220,7 +307,18 @@ describe('Conversations (e2e)', () => {
       .expect(400);
 
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
-    expect(supabaseAdminMock.listMessages).not.toHaveBeenCalled();
+    expect(supabaseAdminMock.listMessagesForUser).not.toHaveBeenCalled();
+  });
+
+  it('GET /conversations/:id/messages rejects pagination limits above the server cap', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/conversations/${CONVERSATION_ID}/messages`)
+      .query({ limit: '101' })
+      .set('Authorization', 'Bearer test-token')
+      .expect(400);
+
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(supabaseAdminMock.listMessagesForUser).not.toHaveBeenCalled();
   });
 
   // --- POST /conversations/:id/messages ---
@@ -238,11 +336,34 @@ describe('Conversations (e2e)', () => {
       text: 'Yes please!',
       time: MESSAGE_ROW.created_at,
     });
-    expect(supabaseAdminMock.createMessage).toHaveBeenCalledWith(
-      ACTIVE_USER.id,
-      TUTOR_PROFILE_ID,
+    expect(supabaseAdminMock.createMessageForUser).toHaveBeenCalledWith(
+      ACTIVE_USER,
       CONVERSATION_ID,
       'Yes please!',
+    );
+    expectSafeConversationPayload(res.body);
+  });
+
+  it('POST /conversations/:id/messages creates a provider message', async () => {
+    resolvedUser = providerOnlyUser();
+    createResult = { ...MESSAGE_ROW, from_provider: true };
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/conversations/${CONVERSATION_ID}/messages`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ text: '  Confirmed, see you soon.  ' })
+      .expect(201);
+
+    expect(res.body).toEqual({
+      id: MESSAGE_ID,
+      fromProvider: true,
+      text: 'Confirmed, see you soon.',
+      time: MESSAGE_ROW.created_at,
+    });
+    expect(supabaseAdminMock.createMessageForUser).toHaveBeenCalledWith(
+      providerOnlyUser(),
+      CONVERSATION_ID,
+      'Confirmed, see you soon.',
     );
     expectSafeConversationPayload(res.body);
   });
@@ -289,7 +410,7 @@ describe('Conversations (e2e)', () => {
       .expect(400);
 
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
-    expect(supabaseAdminMock.createMessage).not.toHaveBeenCalled();
+    expect(supabaseAdminMock.createMessageForUser).not.toHaveBeenCalled();
   });
 
   it('POST /conversations/:id/messages never echoes the message text in errors', async () => {
@@ -317,7 +438,7 @@ describe('Conversations (e2e)', () => {
     expect(res.body.error.details.rejectedFields).toEqual(
       expect.arrayContaining(['fromProvider', 'conversationId']),
     );
-    expect(supabaseAdminMock.createMessage).not.toHaveBeenCalled();
+    expect(supabaseAdminMock.createMessageForUser).not.toHaveBeenCalled();
   });
 
   it('POST /conversations/:id/messages rejects a non-UUID id', async () => {
@@ -328,7 +449,7 @@ describe('Conversations (e2e)', () => {
       .expect(400);
 
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
-    expect(supabaseAdminMock.createMessage).not.toHaveBeenCalled();
+    expect(supabaseAdminMock.createMessageForUser).not.toHaveBeenCalled();
   });
 
   // --- POST /conversations (cold-start) ---
@@ -344,7 +465,7 @@ describe('Conversations (e2e)', () => {
     expect(supabaseAdminMock.openConversation).not.toHaveBeenCalled();
   });
 
-  it('POST /conversations opens (or resumes) a tutor-provider conversation', async () => {
+  it('POST /conversations opens (or resumes) a tutor↔provider conversation', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/conversations')
       .set('Authorization', 'Bearer test-token')
@@ -357,6 +478,10 @@ describe('Conversations (e2e)', () => {
       lastMessage: null,
       lastTime: null,
       unread: false,
+      counterpartAvatarUrl: null,
+      counterpartName: null,
+      counterpartService: null,
+      viewerIsProvider: false,
     });
     expect(supabaseAdminMock.openConversation).toHaveBeenCalledWith(
       ACTIVE_USER.id,
@@ -464,7 +589,7 @@ describe('Conversations (e2e)', () => {
     expect(supabaseAdminMock.openConversation).not.toHaveBeenCalled();
   });
 
-  it('POST /conversations is idempotent: repeated calls return the same conversation', async () => {
+  it('POST /conversations is idempotent — repeated calls return the same conversation', async () => {
     const firstRes = await request(app.getHttpServer())
       .post('/api/v1/conversations')
       .set('Authorization', 'Bearer test-token')
@@ -510,4 +635,28 @@ function collectKeys(value: unknown): string[] {
     key,
     ...collectKeys(nested),
   ]);
+}
+
+function providerOnlyUser(): AuthUser {
+  return {
+    ...ACTIVE_USER,
+    email: 'cuidador@pet.com',
+    roles: ['provider'],
+    profiles: {
+      provider: {
+        id: PROVIDER_PROFILE_ID,
+        displayName: 'Caregiver Test',
+        bio: null,
+        categoryId: 'walk',
+        isAvailable: true,
+        listingId: PROVIDER_ID,
+        pricePerHour: 25,
+        ratingAverage: null,
+        ratingCount: 0,
+        service: 'Dog walking',
+        serviceRadiusKm: 5,
+        status: 'active',
+      },
+    },
+  };
 }

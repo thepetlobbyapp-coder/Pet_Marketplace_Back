@@ -7,18 +7,23 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { AuditLogger } from '../audit/audit.logger';
 import { CurrentUser } from '../common/auth/current-user.decorator';
 import { Roles } from '../common/auth/roles.decorator';
 import type { AuthUser } from '../common/auth/auth-user';
+import { parseCursorPaginationQuery } from '../common/pagination/cursor-pagination';
 import { SupabaseAdminService } from '../common/supabase/supabase-admin.service';
 import {
   parseCreateReportBody,
   type CreateReportRequestDto,
 } from './dto/create-report-request.dto';
-import { ReportResponseDto } from './dto/report-response.dto';
+import {
+  ReportListResponseDto,
+  ReportResponseDto,
+} from './dto/report-response.dto';
 import {
   parseTrustSafetyUuid,
   trustSafetyNotFound,
@@ -28,6 +33,9 @@ import {
   type UpdateReportRequestDto,
 } from './dto/update-report-request.dto';
 import { UserBlockResponseDto } from './dto/user-block-response.dto';
+
+const ADMIN_REPORTS_DEFAULT_LIMIT = 50;
+const ADMIN_REPORTS_MAX_LIMIT = 100;
 
 @ApiTags('trust-safety')
 @Controller()
@@ -89,10 +97,16 @@ export class TrustSafetyController {
 
   @Get('admin/reports')
   @Roles('admin')
-  @ApiOkResponse({ type: ReportResponseDto, isArray: true })
-  async listAdminReports(): Promise<ReportResponseDto[]> {
-    const reports = await this.admin.listAdminReports();
-    return reports.map((report) => ReportResponseDto.fromRecord(report));
+  @ApiOkResponse({ type: ReportListResponseDto })
+  async listAdminReports(
+    @Query() query: unknown,
+  ): Promise<ReportListResponseDto> {
+    const pagination = parseCursorPaginationQuery(query, {
+      defaultLimit: ADMIN_REPORTS_DEFAULT_LIMIT,
+      maxLimit: ADMIN_REPORTS_MAX_LIMIT,
+    });
+    const page = await this.admin.listAdminReports(pagination);
+    return ReportListResponseDto.fromRecords(page.items, page.nextCursor);
   }
 
   @Patch('admin/reports/:id')

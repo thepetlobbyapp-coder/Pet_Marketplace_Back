@@ -11,6 +11,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 /// <reference types="multer" />
+// Pulls `Express.Multer.File` at compile time without emitting a runtime
+// `require('multer')` — see avatar.service.ts for the full rationale.
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBody,
@@ -26,8 +28,8 @@ import { DomainException } from '../common/errors/domain.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { SupabaseAdminService } from '../common/supabase/supabase-admin.service';
 import { AuditLogger } from '../audit/audit.logger';
-import { AccountDeletionRequestResponseDto } from './dto/account-deletion-request-response.dto';
 import { AvatarService } from './avatar.service';
+import { AccountDeletionRequestResponseDto } from './dto/account-deletion-request-response.dto';
 import {
   AVATAR_MAX_SIZE_BYTES,
   AvatarResponseDto,
@@ -70,7 +72,9 @@ export class UsersController {
     type: MeResponseDto,
   })
   async me(@CurrentUser() user: AuthUser): Promise<MeResponseDto> {
-    const avatarUrl = await this.avatars.resolveSignedUrl(user.id);
+    const avatarUrl = user.avatarPath
+      ? await this.avatars.resolveSignedUrl(user.id)
+      : null;
     return MeResponseDto.fromAuthUser(user, { avatarUrl });
   }
 
@@ -86,12 +90,17 @@ export class UsersController {
   ): Promise<MeResponseDto> {
     const input = parseUpdateMeBody(body);
     const updatedUser = await this.admin.updateOwnUser(user.id, input);
-    const avatarUrl = await this.avatars.resolveSignedUrl(updatedUser.id);
+    const avatarUrl = updatedUser.avatarPath
+      ? await this.avatars.resolveSignedUrl(updatedUser.id)
+      : null;
     return MeResponseDto.fromAuthUser(updatedUser, { avatarUrl });
   }
 
   @Post('avatar')
   @HttpCode(HttpStatus.OK)
+  // Stricter throttle than the global 60/min: avatar uploads are heavy
+  // (sharp + storage I/O) and a stable per-user cap of 5/min prevents
+  // abuse and accidental retry storms.
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -110,6 +119,8 @@ export class UsersController {
   })
   @UseInterceptors(
     FileInterceptor('image', {
+      // Hard byte limit at the multipart layer mirrors the API validator
+      // so oversize uploads are rejected before reaching sharp.
       limits: { fileSize: AVATAR_MAX_SIZE_BYTES, files: 1 },
     }),
   )
@@ -118,12 +129,12 @@ export class UsersController {
     @UploadedFile() image: Express.Multer.File | undefined,
   ): Promise<AvatarResponseDto> {
     const result = await this.avatars.uploadAvatar(user.id, image);
-    this.audit.record({
+    await this.audit.record({
       actorUserId: user.id,
       action: 'account.avatar_uploaded',
       entityType: 'user',
       entityId: user.id,
-      metadata: {},
+      metadata: { sizeBytes: image?.size ?? null, mime: image?.mimetype ?? null },
     });
     return result;
   }
@@ -133,7 +144,7 @@ export class UsersController {
   @ApiNoContentResponse({ description: 'Avatar deleted (idempotent).' })
   async deleteAvatar(@CurrentUser() user: AuthUser): Promise<void> {
     await this.avatars.deleteAvatar(user.id);
-    this.audit.record({
+    await this.audit.record({
       actorUserId: user.id,
       action: 'account.avatar_deleted',
       entityType: 'user',
@@ -178,18 +189,17 @@ export class UsersController {
 
   @Post('tutor-profile')
   @ApiOkResponse({
-    description: 'Created tutor profile for the authenticated user.',
+    description:
+      'Backend-owned tutor role/profile creation for the authenticated user.',
     type: TutorProfileResponseDto,
   })
   async createTutorProfile(
     @CurrentUser() user: AuthUser,
     @Body() body: TutorProfileRequestDto,
   ): Promise<TutorProfileResponseDto> {
-    if (user.profiles?.tutor) throw tutorProfileAlreadyExists();
-
     const input = parseCreateTutorProfileBody(body);
     const profile = await this.admin.createOwnTutorProfile(user.id, input);
-    if (!profile) throw tutorProfileAlreadyExists();
+    if (!profile) throw tutorProfileNotFound();
 
     return TutorProfileResponseDto.fromRecord(profile);
   }
@@ -203,7 +213,9 @@ export class UsersController {
     @CurrentUser() user: AuthUser,
     @Body() body: TutorProfileRequestDto,
   ): Promise<TutorProfileResponseDto> {
-    if (!user.profiles?.tutor) throw tutorProfileNotFound();
+    if (!user.roles.includes('tutor') || !user.profiles?.tutor) {
+      throw tutorProfileNotFound();
+    }
 
     const input = parseUpdateTutorProfileBody(body);
     const profile = await this.admin.updateOwnTutorProfile(user.id, input);
@@ -248,15 +260,6 @@ export class UsersController {
 
     return ProviderProfileResponseDto.fromRecord(profile);
   }
-}
-
-function tutorProfileAlreadyExists(): DomainException {
-  return new DomainException(
-    ErrorCode.CONFLICT,
-    'Authenticated user already has a tutor profile.',
-    {},
-    HttpStatus.CONFLICT,
-  );
 }
 
 function tutorProfileNotFound(): DomainException {

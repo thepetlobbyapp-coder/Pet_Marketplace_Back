@@ -8,12 +8,19 @@ export type ProviderStatus = 'active' | 'paused' | 'blocked' | 'deleted';
 export interface TutorProfileSummary {
   id: string;
   displayName: string;
+  defaultAddressId?: string | null;
 }
 
 export interface ProviderProfileSummary {
+  bio: string | null;
+  categoryId: 'boarding' | 'sitting' | 'transport' | 'walk' | null;
   id: string;
+  isAvailable: boolean | null;
+  listingId: string | null;
   displayName: string;
+  pricePerHour: number | null;
   status: ProviderStatus;
+  service: string | null;
   serviceRadiusKm: number;
   ratingAverage: number | null;
   ratingCount: number;
@@ -28,6 +35,12 @@ export interface AuthUser {
   locale?: string;
   createdAt?: string;
   updatedAt?: string;
+  /**
+   * Storage path of the avatar object (e.g. `{user_id}/avatar.jpg`) when set.
+   * Never expose this directly; turn it into a short-lived signed URL in the
+   * response layer (`MeResponseDto`).
+   */
+  avatarPath?: string | null;
   profiles?: {
     tutor?: TutorProfileSummary;
     provider?: ProviderProfileSummary;

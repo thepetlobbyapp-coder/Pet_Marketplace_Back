@@ -3,16 +3,23 @@ import type {
   AuthUser,
   ProviderProfileSummary,
   Role,
-  TutorProfileSummary,
   UserStatus,
 } from '../../common/auth/auth-user';
 
-class TutorProfileSummaryDto implements TutorProfileSummary {
+class TutorProfileSummaryDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
   @ApiProperty()
   displayName!: string;
+
+  @ApiProperty({
+    description:
+      'Whether the tutor has a default address set. The address itself (and ' +
+      'its identifier) is never exposed; only presence, which the app uses to ' +
+      'gate marketplace discovery.',
+  })
+  hasDefaultAddress!: boolean;
 }
 
 class ProviderProfileSummaryDto implements ProviderProfileSummary {
@@ -21,6 +28,9 @@ class ProviderProfileSummaryDto implements ProviderProfileSummary {
 
   @ApiProperty()
   displayName!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  bio!: string | null;
 
   @ApiProperty({ enum: ['active', 'paused', 'blocked', 'deleted'] })
   status!: ProviderProfileSummary['status'];
@@ -33,6 +43,24 @@ class ProviderProfileSummaryDto implements ProviderProfileSummary {
 
   @ApiProperty()
   ratingCount!: number;
+
+  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  listingId!: string | null;
+
+  @ApiPropertyOptional({
+    enum: ['walk', 'sitting', 'transport', 'boarding'],
+    nullable: true,
+  })
+  categoryId!: ProviderProfileSummary['categoryId'];
+
+  @ApiPropertyOptional({ nullable: true })
+  service!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, minimum: 0 })
+  pricePerHour!: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  isAvailable!: boolean | null;
 }
 
 class LinkedProfilesDto {
@@ -65,17 +93,24 @@ export class MeResponseDto {
   @ApiPropertyOptional({ format: 'date-time' })
   updatedAt?: string;
 
-  @ApiPropertyOptional({ type: LinkedProfilesDto })
-  profiles?: LinkedProfilesDto;
-
   @ApiPropertyOptional({
     description:
-      'Short-lived signed URL for the user avatar. Null when no avatar is set.',
+      'Short-lived (1h) signed URL pointing at the user avatar. Null when ' +
+      'no avatar is set. Clients must NOT cache it past the TTL; refetch GET /me.',
     format: 'uri',
     nullable: true,
   })
   avatarUrl?: string | null;
 
+  @ApiPropertyOptional({ type: LinkedProfilesDto })
+  profiles?: LinkedProfilesDto;
+
+  /**
+   * Build the response from an AuthUser, optionally resolving a fresh signed
+   * URL when the user has an avatar object. The signed URL is generated on
+   * demand by the caller (controller) to keep this DTO free of side effects;
+   * callers that don't care about the avatar URL can omit `avatarUrl`.
+   */
   static fromAuthUser(
     user: AuthUser,
     options: { avatarUrl?: string | null } = {},
@@ -99,6 +134,9 @@ export class MeResponseDto {
                     tutor: {
                       id: user.profiles.tutor.id,
                       displayName: user.profiles.tutor.displayName,
+                      hasDefaultAddress: Boolean(
+                        user.profiles.tutor.defaultAddressId,
+                      ),
                     },
                   }
                 : {}),
@@ -107,10 +145,16 @@ export class MeResponseDto {
                     provider: {
                       id: user.profiles.provider.id,
                       displayName: user.profiles.provider.displayName,
+                      bio: user.profiles.provider.bio,
                       status: user.profiles.provider.status,
                       serviceRadiusKm: user.profiles.provider.serviceRadiusKm,
                       ratingAverage: user.profiles.provider.ratingAverage,
                       ratingCount: user.profiles.provider.ratingCount,
+                      listingId: user.profiles.provider.listingId,
+                      categoryId: user.profiles.provider.categoryId,
+                      service: user.profiles.provider.service,
+                      pricePerHour: user.profiles.provider.pricePerHour,
+                      isAvailable: user.profiles.provider.isAvailable,
                     },
                   }
                 : {}),

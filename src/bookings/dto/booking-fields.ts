@@ -38,6 +38,15 @@ export type BookingTimeSlot = (typeof BOOKING_TIME_SLOTS)[number];
 
 /** Quem dispara uma transição de status. */
 export type BookingActor = 'tutor' | 'provider';
+export type BookingViewerRole = BookingActor | 'both';
+export type BookingPerspective = BookingActor;
+
+export interface BookingListQuery {
+  cursor: string | null;
+  limit: number;
+  perspective: BookingPerspective | null;
+  status: BookingStatus | null;
+}
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -48,10 +57,27 @@ export interface BookingRecord {
   id: string;
   provider_id: string;
   pet_id: string;
+  /**
+   * Internal-only participant id used to decorate participant-safe responses.
+   * DTO projection must never expose this field.
+   */
+  tutor_profile_id?: string;
   service_label: string;
   booking_date: string;
   time_slot_id: string;
+  time_slot_ids?: string[] | null;
   status: BookingStatus;
+  price_per_hour_snapshot?: number | null;
+  estimated_total_amount?: number | null;
+  currency?: string | null;
+  viewer_role?: BookingViewerRole | null;
+  provider_name?: string | null;
+  tutor_name?: string | null;
+  pet_name?: string | null;
+  counterpart_name?: string | null;
+  counterpart_avatar_url?: string | null;
+  counterpart_role?: BookingPerspective | null;
+  booking_group_key?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -150,6 +176,30 @@ export function parseTimeSlotField(value: unknown): BookingTimeSlot {
   return value as BookingTimeSlot;
 }
 
+export function parseTimeSlotIdsField(value: unknown): BookingTimeSlot[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw bookingValidationError('timeSlotIds must be a non-empty array.');
+  }
+  if (value.length > BOOKING_TIME_SLOTS.length) {
+    throw bookingValidationError('timeSlotIds contains too many slots.');
+  }
+
+  const seen = new Set<string>();
+  const slots = value.map((item) => {
+    const slot = parseTimeSlotField(item);
+    if (seen.has(slot)) {
+      throw bookingValidationError('timeSlotIds must not contain duplicates.');
+    }
+    seen.add(slot);
+    return slot;
+  });
+
+  return [...slots].sort(
+    (left, right) =>
+      BOOKING_TIME_SLOTS.indexOf(left) - BOOKING_TIME_SLOTS.indexOf(right),
+  );
+}
+
 export function parseServiceField(value: unknown): string {
   if (typeof value !== 'string') {
     throw bookingValidationError('service is required and must be a string.');
@@ -176,6 +226,21 @@ export function parseStatusField(value: unknown): BookingStatus {
     );
   }
   return value as BookingStatus;
+}
+
+export function parseOptionalStatusField(value: unknown): BookingStatus | null {
+  if (value === undefined || value === '') return null;
+  return parseStatusField(value);
+}
+
+export function parseOptionalBookingPerspectiveField(
+  value: unknown,
+): BookingPerspective | null {
+  if (value === undefined || value === '') return null;
+  if (value !== 'tutor' && value !== 'provider') {
+    throw bookingValidationError('perspective must be tutor or provider.');
+  }
+  return value;
 }
 
 /**

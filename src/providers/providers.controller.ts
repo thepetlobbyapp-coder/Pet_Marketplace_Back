@@ -1,4 +1,12 @@
-import { Controller, Get, HttpStatus, Param, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpStatus,
+  Param,
+  Patch,
+  Query,
+} from '@nestjs/common';
 import { ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/auth/current-user.decorator';
 import type { AuthUser } from '../common/auth/auth-user';
@@ -6,12 +14,17 @@ import { DomainException } from '../common/errors/domain.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { SupabaseAdminService } from '../common/supabase/supabase-admin.service';
 import { ProviderResponseDto } from './dto/provider-response.dto';
-import { ListProvidersQueryDto, parseListProvidersQuery } from './dto/list-providers-query.dto';
+import {
+  ListProvidersQueryDto,
+  parseListProvidersQuery,
+} from './dto/list-providers-query.dto';
 import { providerNotFound } from './dto/provider-fields';
 import {
+  ProviderWeeklyAvailabilityDto,
   TimeSlotResponseDto,
   buildTimeSlots,
   parseAvailabilityQuery,
+  parseProviderWeeklyAvailabilityBody,
 } from '../bookings/dto/availability.dto';
 
 const UUID_PATTERN =
@@ -28,6 +41,30 @@ const UUID_PATTERN =
 export class ProvidersController {
   constructor(private readonly admin: SupabaseAdminService) {}
 
+  @Get('me/availability')
+  @ApiOkResponse({ type: ProviderWeeklyAvailabilityDto })
+  async ownAvailability(
+    @CurrentUser() user: AuthUser,
+  ): Promise<ProviderWeeklyAvailabilityDto> {
+    const availability =
+      await this.admin.getOwnProviderWeeklyAvailability(user);
+    return ProviderWeeklyAvailabilityDto.fromDays(availability);
+  }
+
+  @Patch('me/availability')
+  @ApiOkResponse({ type: ProviderWeeklyAvailabilityDto })
+  async updateOwnAvailability(
+    @CurrentUser() user: AuthUser,
+    @Body() body: unknown,
+  ): Promise<ProviderWeeklyAvailabilityDto> {
+    const input = parseProviderWeeklyAvailabilityBody(body);
+    const availability = await this.admin.updateOwnProviderWeeklyAvailability(
+      user,
+      input,
+    );
+    return ProviderWeeklyAvailabilityDto.fromDays(availability);
+  }
+
   @Get()
   @ApiQuery({ type: ListProvidersQueryDto })
   @ApiOkResponse({ type: ProviderResponseDto, isArray: true })
@@ -37,7 +74,9 @@ export class ProvidersController {
   ): Promise<ProviderResponseDto[]> {
     const filter = parseListProvidersQuery(query);
     const providers = await this.admin.listProviders(user.id, filter);
-    return providers.map((provider) => ProviderResponseDto.fromRecord(provider));
+    return providers.map((provider) =>
+      ProviderResponseDto.fromRecord(provider),
+    );
   }
 
   @Get(':id/availability')

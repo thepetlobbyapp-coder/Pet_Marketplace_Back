@@ -31,19 +31,19 @@ describe('AuditLogger', () => {
       entityType: 'report',
       entityId: '66666666-7777-4888-8999-000000000000',
       metadata: {
-        address: 'private-address-marker',
+        address: '1 Private Street',
         category: 'safety_concern',
         description: 'Reported private text.',
-        email: 'private-email-marker',
+        email: 'admin@example.test',
         internalNote: 'Internal moderation note.',
         location: { lat: 51.5, lng: -0.12 },
         mime: 'image/png',
-        phone: 'private-phone-marker',
+        phone: '+447700900123',
         sizeBytes: 123,
         source: 'public_web',
         status: 'in_review',
         targetType: 'conversation',
-        token: 'private-token-marker',
+        token: 'secret-token',
       },
     });
 
@@ -65,7 +65,7 @@ describe('AuditLogger', () => {
       'Reported private text.',
     );
     expect(JSON.stringify(admin.appendAuditLog.mock.calls)).not.toContain(
-      'private-token-marker',
+      'secret-token',
     );
   });
 

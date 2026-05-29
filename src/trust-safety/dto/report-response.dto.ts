@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import type {
   ReportCategory,
   ReportRecord,
@@ -49,6 +49,24 @@ export class ReportResponseDto {
       targetId: record.target_id,
       createdAt: record.created_at,
       updatedAt: record.updated_at,
+    };
+  }
+}
+
+export class ReportListResponseDto {
+  @ApiProperty({ type: [ReportResponseDto] })
+  items!: ReportResponseDto[];
+
+  @ApiPropertyOptional({ nullable: true })
+  nextCursor!: string | null;
+
+  static fromRecords(
+    records: ReportRecord[],
+    nextCursor: string | null,
+  ): ReportListResponseDto {
+    return {
+      items: records.map((record) => ReportResponseDto.fromRecord(record)),
+      nextCursor,
     };
   }
 }

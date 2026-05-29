@@ -14,7 +14,6 @@ import type {
   ProviderProfileRecord,
 } from '../src/users/dto/provider-profile.dto';
 import type { AccountDeletionRequestRecord } from '../src/users/dto/account-deletion-request-response.dto';
-import { AvatarService } from '../src/users/avatar.service';
 
 const ACTIVE_USER: AuthUser = {
   id: '56e4ff57-5355-47bb-904b-27ebde394bf7',
@@ -29,15 +28,13 @@ const ACTIVE_USER: AuthUser = {
       id: '1b6fe9f3-514f-475c-9286-38c19e576116',
       displayName: 'Admin Test',
     },
-    provider: {
-      id: '2a0a2ea6-1f58-4690-94ce-d55728954e0e',
-      displayName: 'Admin Provider',
-      status: 'active',
-      serviceRadiusKm: 5,
-      ratingAverage: null,
-      ratingCount: 0,
-    },
   },
+};
+
+const EXPECTED_ME_TUTOR_SUMMARY = {
+  id: ACTIVE_USER.profiles?.tutor?.id,
+  displayName: 'Admin Test',
+  hasDefaultAddress: false,
 };
 
 const TUTOR_PROFILE_ROW: TutorProfileRecord = {
@@ -57,21 +54,36 @@ const EXPECTED_TUTOR_PROFILE = {
 const PROVIDER_PROFILE_ROW: ProviderProfileRecord = {
   id: '2a0a2ea6-1f58-4690-94ce-d55728954e0e',
   display_name: 'Provider Test',
+  bio: null,
+  base_address_id: null,
   status: 'paused',
   service_radius_km: 5,
   rating_average: null,
   rating_count: 0,
   created_at: '2026-05-18T22:30:00.000Z',
   updated_at: '2026-05-18T22:30:00.000Z',
+  listing_id: '8a50a261-f0a8-4c79-90d5-22e55e0b2436',
+  category: 'walk',
+  service_label: 'Dog walking',
+  avatar_url: null,
+  price_per_hour: 25,
+  is_available: true,
 };
 
 const EXPECTED_PROVIDER_PROFILE = {
   id: PROVIDER_PROFILE_ROW.id,
   displayName: 'Provider Test',
+  bio: null,
   status: 'paused',
   serviceRadiusKm: 5,
   ratingAverage: null,
   ratingCount: 0,
+  listingId: PROVIDER_PROFILE_ROW.listing_id,
+  categoryId: 'walk',
+  service: 'Dog walking',
+  avatarUrl: null,
+  pricePerHour: 25,
+  isAvailable: true,
   createdAt: PROVIDER_PROFILE_ROW.created_at,
   updatedAt: PROVIDER_PROFILE_ROW.updated_at,
 };
@@ -107,7 +119,7 @@ describe('Me (e2e)', () => {
           ...TUTOR_PROFILE_ROW,
           display_name: input.displayName,
         };
-        resolvedUser = withTutorProfile(input.displayName);
+        resolvedUser = withTutorProfile(input.displayName, resolvedUser);
         return row;
       },
     ),
@@ -118,38 +130,61 @@ describe('Me (e2e)', () => {
           display_name: input.displayName,
           updated_at: '2026-05-18T23:00:00.000Z',
         };
-        resolvedUser = withTutorProfile(input.displayName);
+        resolvedUser = withTutorProfile(input.displayName, resolvedUser);
         return row;
       },
     ),
     createOwnProviderProfile: jest.fn(
       async (_userId: string, input: ProviderProfileInput) => {
+        const displayName =
+          input.displayName ?? PROVIDER_PROFILE_ROW.display_name;
         const row = {
           ...PROVIDER_PROFILE_ROW,
-          display_name: input.displayName,
+          display_name: displayName,
+          bio: input.bio ?? PROVIDER_PROFILE_ROW.bio,
+          category: input.categoryId ?? PROVIDER_PROFILE_ROW.category,
+          is_available: input.isAvailable ?? PROVIDER_PROFILE_ROW.is_available,
+          price_per_hour:
+            input.pricePerHour ?? PROVIDER_PROFILE_ROW.price_per_hour,
+          service_label: input.service ?? PROVIDER_PROFILE_ROW.service_label,
+          service_radius_km:
+            input.serviceRadiusKm ?? PROVIDER_PROFILE_ROW.service_radius_km,
+          status: (input.publish === true
+            ? 'active'
+            : input.publish === false
+              ? 'paused'
+              : PROVIDER_PROFILE_ROW.status) as ProviderProfileRecord['status'],
         };
-        resolvedUser = withProviderProfile(input.displayName, resolvedUser);
+        resolvedUser = withProviderProfile(displayName, resolvedUser, row);
         return row;
       },
     ),
     updateOwnProviderProfile: jest.fn(
       async (_userId: string, input: ProviderProfileInput) => {
+        const displayName =
+          input.displayName ?? PROVIDER_PROFILE_ROW.display_name;
         const row = {
           ...PROVIDER_PROFILE_ROW,
-          display_name: input.displayName,
+          display_name: displayName,
+          bio: input.bio ?? PROVIDER_PROFILE_ROW.bio,
+          category: input.categoryId ?? PROVIDER_PROFILE_ROW.category,
+          is_available: input.isAvailable ?? PROVIDER_PROFILE_ROW.is_available,
+          price_per_hour:
+            input.pricePerHour ?? PROVIDER_PROFILE_ROW.price_per_hour,
+          service_label: input.service ?? PROVIDER_PROFILE_ROW.service_label,
+          service_radius_km:
+            input.serviceRadiusKm ?? PROVIDER_PROFILE_ROW.service_radius_km,
+          status: (input.publish === true
+            ? 'active'
+            : input.publish === false
+              ? 'paused'
+              : PROVIDER_PROFILE_ROW.status) as ProviderProfileRecord['status'],
           updated_at: '2026-05-18T23:30:00.000Z',
         };
-        resolvedUser = withProviderProfile(input.displayName, resolvedUser);
+        resolvedUser = withProviderProfile(displayName, resolvedUser, row);
         return row;
       },
     ),
-  };
-  const avatarMock = {
-    resolveSignedUrl: jest.fn(async () => null),
-    uploadAvatar: jest.fn(async () => ({
-      avatarUrl: 'https://signed.example/avatar.jpg',
-    })),
-    deleteAvatar: jest.fn(async () => undefined),
   };
 
   beforeAll(async () => {
@@ -160,8 +195,6 @@ describe('Me (e2e)', () => {
       .useValue(supabaseMock)
       .overrideProvider(SupabaseAdminService)
       .useValue(supabaseAdminMock)
-      .overrideProvider(AvatarService)
-      .useValue(avatarMock)
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -181,9 +214,6 @@ describe('Me (e2e)', () => {
     supabaseAdminMock.updateOwnTutorProfile.mockClear();
     supabaseAdminMock.createOwnProviderProfile.mockClear();
     supabaseAdminMock.updateOwnProviderProfile.mockClear();
-    avatarMock.resolveSignedUrl.mockClear();
-    avatarMock.uploadAvatar.mockClear();
-    avatarMock.deleteAvatar.mockClear();
   });
 
   afterAll(async () => {
@@ -205,10 +235,34 @@ describe('Me (e2e)', () => {
       createdAt: ACTIVE_USER.createdAt,
       updatedAt: ACTIVE_USER.updatedAt,
       avatarUrl: null,
-      profiles: ACTIVE_USER.profiles,
+      profiles: { tutor: EXPECTED_ME_TUTOR_SUMMARY },
     });
     expect(supabaseMock.resolveUser).toHaveBeenCalledWith('test-token');
-    expect(avatarMock.resolveSignedUrl).toHaveBeenCalledWith(ACTIVE_USER.id);
+    expectForbiddenFieldsAbsent(res.body);
+  });
+
+  it('GET /api/v1/me signals a default address without leaking its identifier', async () => {
+    resolvedUser = {
+      ...ACTIVE_USER,
+      profiles: {
+        tutor: {
+          id: TUTOR_PROFILE_ROW.id,
+          displayName: 'Admin Test',
+          defaultAddressId: '7c3e4f5a-6b7c-4d8e-9f10-2a3b4c5d6e7f',
+        },
+      },
+    };
+
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/me')
+      .set('Authorization', 'Bearer test-token')
+      .expect(200);
+
+    expect(res.body.profiles.tutor).toEqual({
+      id: TUTOR_PROFILE_ROW.id,
+      displayName: 'Admin Test',
+      hasDefaultAddress: true,
+    });
     expectForbiddenFieldsAbsent(res.body);
   });
 
@@ -257,45 +311,13 @@ describe('Me (e2e)', () => {
       createdAt: ACTIVE_USER.createdAt,
       updatedAt: '2026-05-18T21:00:00.000Z',
       avatarUrl: null,
-      profiles: ACTIVE_USER.profiles,
+      profiles: { tutor: EXPECTED_ME_TUTOR_SUMMARY },
     });
     expect(supabaseAdminMock.updateOwnUser).toHaveBeenCalledWith(
       ACTIVE_USER.id,
       { locale: 'en-US' },
     );
     expectForbiddenFieldsAbsent(res.body);
-  });
-
-  it('POST /api/v1/me/avatar uploads one multipart image field', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/me/avatar')
-      .set('Authorization', 'Bearer test-token')
-      .attach('image', Buffer.from('fake-image'), {
-        filename: 'avatar.jpg',
-        contentType: 'image/jpeg',
-      })
-      .expect(200);
-
-    expect(res.body).toEqual({
-      avatarUrl: 'https://signed.example/avatar.jpg',
-    });
-    expect(avatarMock.uploadAvatar).toHaveBeenCalledWith(
-      ACTIVE_USER.id,
-      expect.objectContaining({
-        fieldname: 'image',
-        originalname: 'avatar.jpg',
-        mimetype: 'image/jpeg',
-      }),
-    );
-  });
-
-  it('DELETE /api/v1/me/avatar deletes the authenticated user avatar', async () => {
-    await request(app.getHttpServer())
-      .delete('/api/v1/me/avatar')
-      .set('Authorization', 'Bearer test-token')
-      .expect(204);
-
-    expect(avatarMock.deleteAvatar).toHaveBeenCalledWith(ACTIVE_USER.id);
   });
 
   it('PATCH /api/v1/me rejects attempts to change backend-owned fields', async () => {
@@ -398,7 +420,36 @@ describe('Me (e2e)', () => {
     expect(me.body.profiles.tutor).toEqual({
       id: TUTOR_PROFILE_ROW.id,
       displayName: 'Tutor Test',
+      hasDefaultAddress: false,
     });
+  });
+
+  it('POST /api/v1/me/tutor-profile adds tutor role and profile together for provider-only users', async () => {
+    resolvedUser = providerOnlyUser();
+
+    await request(app.getHttpServer())
+      .post('/api/v1/me/tutor-profile')
+      .set('Authorization', 'Bearer test-token')
+      .send({ displayName: '  Tutor Added  ' })
+      .expect(201);
+
+    expect(supabaseAdminMock.createOwnTutorProfile).toHaveBeenCalledWith(
+      ACTIVE_USER.id,
+      { displayName: 'Tutor Added' },
+    );
+
+    const me = await request(app.getHttpServer())
+      .get('/api/v1/me')
+      .set('Authorization', 'Bearer test-token')
+      .expect(200);
+
+    expect(me.body.roles).toEqual(['provider', 'tutor']);
+    expect(me.body.profiles.tutor).toEqual({
+      id: TUTOR_PROFILE_ROW.id,
+      displayName: 'Tutor Added',
+      hasDefaultAddress: false,
+    });
+    expect(me.body.profiles.provider).toEqual(expectedProviderSummary());
   });
 
   it('PATCH /api/v1/me/tutor-profile updates the authenticated tutor profile', async () => {
@@ -427,18 +478,22 @@ describe('Me (e2e)', () => {
     expect(me.body.profiles.tutor).toEqual({
       id: TUTOR_PROFILE_ROW.id,
       displayName: 'Tutor Updated',
+      hasDefaultAddress: false,
     });
   });
 
-  it('POST /api/v1/me/tutor-profile returns 409 when a tutor profile already exists', async () => {
+  it('POST /api/v1/me/tutor-profile is idempotent for an existing tutor profile', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/me/tutor-profile')
       .set('Authorization', 'Bearer test-token')
       .send({ displayName: 'Tutor Test' })
-      .expect(409);
+      .expect(201);
 
-    expect(res.body.error.code).toBe('CONFLICT');
-    expect(supabaseAdminMock.createOwnTutorProfile).not.toHaveBeenCalled();
+    expect(res.body).toEqual(EXPECTED_TUTOR_PROFILE);
+    expect(supabaseAdminMock.createOwnTutorProfile).toHaveBeenCalledWith(
+      ACTIVE_USER.id,
+      { displayName: 'Tutor Test' },
+    );
   });
 
   it('PATCH /api/v1/me/tutor-profile returns 404 when no tutor profile exists', async () => {
@@ -460,21 +515,18 @@ describe('Me (e2e)', () => {
     ['empty displayName', { displayName: '   ' }],
     ['invalid displayName type', { displayName: 123 }],
     ['too long displayName', { displayName: 'x'.repeat(81) }],
-  ])(
-    'POST /api/v1/me/tutor-profile rejects %s',
-    async (_caseName, payload) => {
-      resolvedUser = withoutTutorProfile();
+  ])('POST /api/v1/me/tutor-profile rejects %s', async (_caseName, payload) => {
+    resolvedUser = withoutTutorProfile();
 
-      const res = await request(app.getHttpServer())
-        .post('/api/v1/me/tutor-profile')
-        .set('Authorization', 'Bearer test-token')
-        .send(payload)
-        .expect(400);
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/me/tutor-profile')
+      .set('Authorization', 'Bearer test-token')
+      .send(payload)
+      .expect(400);
 
-      expect(res.body.error.code).toBe('VALIDATION_ERROR');
-      expect(supabaseAdminMock.createOwnTutorProfile).not.toHaveBeenCalled();
-    },
-  );
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(supabaseAdminMock.createOwnTutorProfile).not.toHaveBeenCalled();
+  });
 
   it('PATCH /api/v1/me/tutor-profile rejects an empty body', async () => {
     const res = await request(app.getHttpServer())
@@ -488,8 +540,6 @@ describe('Me (e2e)', () => {
   });
 
   it('POST /api/v1/me/provider-profile creates a paused provider profile via the backend', async () => {
-    resolvedUser = withoutProviderProfile();
-
     const res = await request(app.getHttpServer())
       .post('/api/v1/me/provider-profile')
       .set('Authorization', 'Bearer test-token')
@@ -510,17 +560,12 @@ describe('Me (e2e)', () => {
 
     expect(me.body.roles).toEqual(['tutor', 'provider']);
     expect(me.body.profiles.provider).toEqual({
-      id: PROVIDER_PROFILE_ROW.id,
-      displayName: 'Provider Test',
-      status: 'paused',
-      serviceRadiusKm: 5,
-      ratingAverage: null,
-      ratingCount: 0,
+      ...expectedProviderSummary('Provider Test'),
     });
   });
 
   it('PATCH /api/v1/me/provider-profile updates the authenticated provider profile', async () => {
-    resolvedUser = withProviderRole();
+    resolvedUser = providerOnlyUser();
 
     const res = await request(app.getHttpServer())
       .patch('/api/v1/me/provider-profile')
@@ -540,9 +585,24 @@ describe('Me (e2e)', () => {
     expectProviderProfileSafePayload(res.body);
   });
 
-  it('PATCH /api/v1/me/provider-profile returns 404 when no provider profile exists', async () => {
-    resolvedUser = withoutProviderProfile();
+  it('PATCH /api/v1/me/provider-profile can pause the provider profile', async () => {
+    resolvedUser = providerOnlyUser();
 
+    const res = await request(app.getHttpServer())
+      .patch('/api/v1/me/provider-profile')
+      .set('Authorization', 'Bearer test-token')
+      .send({ displayName: 'Provider Test', publish: false })
+      .expect(200);
+
+    expect(res.body.status).toBe('paused');
+    expect(supabaseAdminMock.updateOwnProviderProfile).toHaveBeenCalledWith(
+      ACTIVE_USER.id,
+      { displayName: 'Provider Test', publish: false },
+    );
+    expectProviderProfileSafePayload(res.body);
+  });
+
+  it('PATCH /api/v1/me/provider-profile returns 404 when no provider profile exists', async () => {
     const res = await request(app.getHttpServer())
       .patch('/api/v1/me/provider-profile')
       .set('Authorization', 'Bearer test-token')
@@ -562,8 +622,6 @@ describe('Me (e2e)', () => {
   ])(
     'POST /api/v1/me/provider-profile rejects %s',
     async (_caseName, payload) => {
-      resolvedUser = withoutProviderProfile();
-
       const res = await request(app.getHttpServer())
         .post('/api/v1/me/provider-profile')
         .set('Authorization', 'Bearer test-token')
@@ -576,8 +634,6 @@ describe('Me (e2e)', () => {
   );
 
   it('POST /api/v1/me/provider-profile blocks fields outside the allowlist', async () => {
-    resolvedUser = withoutProviderProfile();
-
     const res = await request(app.getHttpServer())
       .post('/api/v1/me/provider-profile')
       .set('Authorization', 'Bearer test-token')
@@ -733,27 +789,25 @@ function createDeletionRequestRow(): AccountDeletionRequestRecord {
 }
 
 function withoutTutorProfile(): AuthUser {
-  const provider = ACTIVE_USER.profiles?.provider;
   return {
     ...ACTIVE_USER,
-    profiles: provider ? { provider } : {},
+    profiles: {},
   };
 }
 
-function withoutProviderProfile(): AuthUser {
-  const tutor = ACTIVE_USER.profiles?.tutor;
+function withTutorProfile(
+  displayName: string,
+  currentUser: AuthUser | null,
+): AuthUser {
+  const currentRoles = currentUser?.roles ?? ACTIVE_USER.roles;
+  const currentProvider = currentUser?.profiles?.provider;
   return {
     ...ACTIVE_USER,
-    roles: ACTIVE_USER.roles.filter((role) => role !== 'provider'),
-    profiles: tutor ? { tutor } : {},
-  };
-}
-
-function withTutorProfile(displayName: string): AuthUser {
-  return {
-    ...ACTIVE_USER,
+    roles: currentRoles.includes('tutor')
+      ? currentRoles
+      : [...currentRoles, 'tutor'],
     profiles: {
-      ...ACTIVE_USER.profiles,
+      ...(currentProvider ? { provider: currentProvider } : {}),
       tutor: {
         id: TUTOR_PROFILE_ROW.id,
         displayName,
@@ -762,16 +816,20 @@ function withTutorProfile(displayName: string): AuthUser {
   };
 }
 
-function withProviderRole(): AuthUser {
+function providerOnlyUser(): AuthUser {
   return {
     ...ACTIVE_USER,
-    roles: ['tutor', 'provider'],
+    roles: ['provider'],
+    profiles: {
+      provider: expectedProviderSummary(),
+    },
   };
 }
 
 function withProviderProfile(
   displayName: string,
   currentUser: AuthUser | null,
+  row: ProviderProfileRecord = PROVIDER_PROFILE_ROW,
 ): AuthUser {
   const currentRoles = currentUser?.roles ?? ACTIVE_USER.roles;
   const currentTutor = currentUser?.profiles?.tutor;
@@ -782,14 +840,27 @@ function withProviderProfile(
       : [...currentRoles, 'provider'],
     profiles: {
       ...(currentTutor ? { tutor: currentTutor } : {}),
-      provider: {
-        id: PROVIDER_PROFILE_ROW.id,
-        displayName,
-        status: PROVIDER_PROFILE_ROW.status,
-        serviceRadiusKm: PROVIDER_PROFILE_ROW.service_radius_km,
-        ratingAverage: PROVIDER_PROFILE_ROW.rating_average,
-        ratingCount: PROVIDER_PROFILE_ROW.rating_count,
-      },
+      provider: expectedProviderSummary(displayName, row),
     },
+  };
+}
+
+function expectedProviderSummary(
+  displayName = PROVIDER_PROFILE_ROW.display_name,
+  row: ProviderProfileRecord = PROVIDER_PROFILE_ROW,
+) {
+  return {
+    id: row.id,
+    displayName,
+    bio: row.bio,
+    status: row.status,
+    serviceRadiusKm: row.service_radius_km,
+    ratingAverage: row.rating_average,
+    ratingCount: row.rating_count,
+    listingId: row.listing_id ?? null,
+    categoryId: row.category ?? null,
+    service: row.service_label ?? null,
+    pricePerHour: row.price_per_hour ?? null,
+    isAvailable: row.is_available ?? null,
   };
 }

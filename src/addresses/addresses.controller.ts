@@ -1,5 +1,15 @@
-import { Body, Controller, Get, HttpStatus, Param, Patch, Post } from '@nestjs/common';
-import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+} from '@nestjs/common';
+import { ApiNoContentResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/auth/current-user.decorator';
 import type { AuthUser } from '../common/auth/auth-user';
 import { DomainException } from '../common/errors/domain.exception';
@@ -60,6 +70,18 @@ export class AddressesController {
     );
     if (!address) throw addressNotFound();
     return AddressResponseDto.fromRecord(address);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNoContentResponse({ description: 'Address deleted.' })
+  async remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<void> {
+    const addressId = parseAddressId(id);
+    const deleted = await this.admin.deleteOwnAddress(user.id, addressId);
+    if (!deleted) throw addressNotFound();
   }
 }
 

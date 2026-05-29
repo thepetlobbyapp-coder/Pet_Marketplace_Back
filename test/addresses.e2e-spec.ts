@@ -1,10 +1,12 @@
-import { INestApplication } from '@nestjs/common';
+import { HttpStatus, INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { SupabaseService } from '../src/common/auth/supabase.service';
 import type { AuthUser } from '../src/common/auth/auth-user';
 import { SupabaseAdminService } from '../src/common/supabase/supabase-admin.service';
+import { DomainException } from '../src/common/errors/domain.exception';
+import { ErrorCode } from '../src/common/errors/error-codes';
 import type {
   AddressWithDefaultRecord,
 } from '../src/addresses/dto/address-fields';
@@ -56,6 +58,7 @@ describe('Addresses (e2e)', () => {
   let app: INestApplication;
   let resolvedUser: AuthUser | null;
   let updateResult: AddressWithDefaultRecord | null;
+  let deleteResult: boolean | 'active-provider-base';
 
   const supabaseMock = {
     get isConfigured(): boolean {
@@ -105,6 +108,17 @@ describe('Addresses (e2e)', () => {
             }
           : null,
     ),
+    deleteOwnAddress: jest.fn(async () => {
+      if (deleteResult === 'active-provider-base') {
+        throw new DomainException(
+          ErrorCode.CONFLICT,
+          'Pause your provider listing before deleting its base address.',
+          {},
+          HttpStatus.CONFLICT,
+        );
+      }
+      return deleteResult;
+    }),
   };
 
   beforeAll(async () => {
@@ -125,10 +139,12 @@ describe('Addresses (e2e)', () => {
   beforeEach(() => {
     resolvedUser = ACTIVE_USER;
     updateResult = { ...ADDRESS_ROW, isDefaultTutorAddress: false };
+    deleteResult = true;
     supabaseMock.resolveUser.mockClear();
     supabaseAdminMock.listOwnAddresses.mockClear();
     supabaseAdminMock.createOwnAddress.mockClear();
     supabaseAdminMock.updateOwnAddress.mockClear();
+    supabaseAdminMock.deleteOwnAddress.mockClear();
   });
 
   afterAll(async () => {
@@ -246,6 +262,40 @@ describe('Addresses (e2e)', () => {
     expect(res.body.error.code).toBe('NOT_FOUND');
   });
 
+  it('DELETE /api/v1/addresses/:id deletes an own address', async () => {
+    await request(app.getHttpServer())
+      .delete(`/api/v1/addresses/${ADDRESS_ID}`)
+      .set('Authorization', 'Bearer test-token')
+      .expect(204);
+
+    expect(supabaseAdminMock.deleteOwnAddress).toHaveBeenCalledWith(
+      USER_ID,
+      ADDRESS_ID,
+    );
+  });
+
+  it('DELETE /api/v1/addresses/:id returns 404 for missing or unowned address', async () => {
+    deleteResult = false;
+
+    const res = await request(app.getHttpServer())
+      .delete(`/api/v1/addresses/${ADDRESS_ID}`)
+      .set('Authorization', 'Bearer test-token')
+      .expect(404);
+
+    expect(res.body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('DELETE /api/v1/addresses/:id returns 409 for an active provider base address', async () => {
+    deleteResult = 'active-provider-base';
+
+    const res = await request(app.getHttpServer())
+      .delete(`/api/v1/addresses/${ADDRESS_ID}`)
+      .set('Authorization', 'Bearer test-token')
+      .expect(409);
+
+    expect(res.body.error.code).toBe('CONFLICT');
+  });
+
   it.each([
     ['non-object body', []],
     ['missing latitude', { city: 'London', longitude: -0.141 }],
@@ -306,6 +356,16 @@ describe('Addresses (e2e)', () => {
 
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
     expect(supabaseAdminMock.updateOwnAddress).not.toHaveBeenCalled();
+  });
+
+  it('DELETE /api/v1/addresses/:id rejects a non-UUID id', async () => {
+    const res = await request(app.getHttpServer())
+      .delete('/api/v1/addresses/not-a-uuid')
+      .set('Authorization', 'Bearer test-token')
+      .expect(400);
+
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(supabaseAdminMock.deleteOwnAddress).not.toHaveBeenCalled();
   });
 
   it('PATCH /api/v1/addresses/:id rejects partial coordinate updates', async () => {

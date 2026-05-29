@@ -571,6 +571,52 @@ export class SupabaseAdminService implements OnModuleInit {
     return this.withDefaultAddressFlag([data], defaultAddressId)[0]!;
   }
 
+  async deleteOwnAddress(userId: string, addressId: string): Promise<boolean> {
+    const client = this.getClient();
+    const existing = await this.loadOwnAddress(userId, addressId);
+    if (!existing) return false;
+
+    const activeProviderBase = await client
+      .from('provider_profiles')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('base_address_id', addressId)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (activeProviderBase.error) {
+      this.logger.error(
+        { code: activeProviderBase.error.code },
+        'Failed to check active provider base address before delete.',
+      );
+      throw new AuthBackendUnavailableException();
+    }
+
+    if (activeProviderBase.data) {
+      throw new DomainException(
+        ErrorCode.CONFLICT,
+        'Pause your provider listing before deleting its base address.',
+        {},
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    const { data, error } = await client
+      .from('addresses')
+      .delete()
+      .eq('id', addressId)
+      .eq('user_id', userId)
+      .select('id')
+      .maybeSingle();
+
+    if (error) {
+      this.logger.error({ code: error.code }, 'Failed to delete address.');
+      throw new AuthBackendUnavailableException();
+    }
+
+    return Boolean(data);
+  }
+
   /**
    * Pets do tutor. Toda query é escopada por `tutor_profile_id` e ignora
    * registros com `deleted_at`, garantindo que o tutor só vê os próprios pets.
